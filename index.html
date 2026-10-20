@@ -5651,7 +5651,7 @@ function renderBkStandaloneModal(){
     +'</div>'
     +'<div style="margin-bottom:16px"><label style="font-size:10px;font-weight:700;color:#8a9ab0;text-transform:uppercase;display:block;margin-bottom:4px">Notes</label>'
     +'<textarea id="bksf_no" rows="3" style="width:100%;padding:9px 11px;border:1.5px solid #e2e6ed;border-radius:7px;font-size:13px;box-sizing:border-box;resize:vertical">'+(isEdit?(ed.notes||''):(lead?.comments||''))+'</textarea></div>'
-    +'<div style="margin-bottom:16px"><label style="font-size:10px;font-weight:700;color:#8a9ab0;text-transform:uppercase;display:block;margin-bottom:4px">Dialpad Call ID <span style="color:#e74c3c">*</span></label>'
+    +'<div style="margin-bottom:16px"><label style="font-size:10px;font-weight:700;color:#8a9ab0;text-transform:uppercase;display:block;margin-bottom:4px">Dialpad Call ID</label>'
     +'<input id="bksf_callid" type="text" inputmode="numeric" maxlength="16" placeholder="16-digit Dialpad Call ID" value="'+(isEdit?(ed.dialpad_call_id||''):'').replace(/"/g,'&quot;')+'" oninput="this.value=this.value.replace(/\\D/g,\'\').slice(0,16)" style="width:100%;padding:9px 11px;border:1.5px solid #e2e6ed;border-radius:7px;font-size:13px;box-sizing:border-box;letter-spacing:1px;font-family:monospace"></div>'
 
     +'<div id="bksf_err" style="color:#e74c3c;font-size:12px;margin-bottom:10px;display:none"></div>'
@@ -5731,7 +5731,6 @@ async function bkStandaloneSave(){
     ['bksf_dt','Demo Time'],
     ['bksf_di_date','Demo Date IST'],
     ['bksf_di_time','Demo Time IST'],
-    ['bksf_callid','Dialpad Call ID'],
   ];
   const bksfMissing=[];
   BKSF_REQ.forEach(([id,label])=>{
@@ -5751,9 +5750,9 @@ async function bkStandaloneSave(){
     if(fe){fe.scrollIntoView({behavior:'smooth',block:'center'});try{fe.focus();}catch(e){}}
     return;
   }
-  // Dialpad Call ID — must be exactly 16 digits
+  // Dialpad Call ID — optional but if filled must be exactly 16 digits
   const callidVal=(document.getElementById('bksf_callid')?.value||'').trim();
-  if(callidVal.length!==16){
+  if(callidVal&&callidVal.length!==16){
     const ciEl=document.getElementById('bksf_callid');
     if(ciEl){ciEl.style.border='1.5px solid #e74c3c';ciEl.style.background='#fdf0ee';}
     const errMsg='⚠️ Dialpad Call ID must be exactly 16 digits';
