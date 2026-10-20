@@ -32,29 +32,39 @@ exports.handler = async (event, context) => {
       const cleanPhone = phone.replace(/\D/g, '');
       const cutoff = Math.floor(Date.now() / 1000) - (parseInt(minutes_ago) * 60);
 
-      // Try searching by phone number directly
-      url = `https://dialpad.com/api/v2/call?apikey=${DIALPAD_API_KEY}&external_number=${encodeURIComponent('+' + cleanPhone)}&limit=10`;
+      // Try Dialpad stats/call search endpoint with date range
+      const now = Math.floor(Date.now() / 1000);
+      const dateStart = new Date((now - parseInt(minutes_ago) * 60) * 1000).toISOString().split('T')[0];
+
+      // Try searching via contact endpoint first
+      url = `https://dialpad.com/api/v2/contacts?apikey=${DIALPAD_API_KEY}&phone=${encodeURIComponent('+' + cleanPhone)}`;
       response = await fetch(url);
-      data = await response.json();
+      const contactData = await response.json();
 
-      if (!response.ok) {
-        // Fallback: try without + prefix
-        url = `https://dialpad.com/api/v2/call?apikey=${DIALPAD_API_KEY}&external_number=${encodeURIComponent(cleanPhone)}&limit=10`;
-        response = await fetch(url);
-        data = await response.json();
+      // Try call search with starred/recent calls
+      const url2 = `https://dialpad.com/api/v2/call?apikey=${DIALPAD_API_KEY}&date_start=${dateStart}&limit=50`;
+      const response2 = await fetch(url2);
+      const data2 = await response2.json();
 
-        if (!response.ok) {
-          return { statusCode: response.status, headers, body: JSON.stringify({ error: data, tried_url: url }) };
-        }
+      if (response2.ok) {
+        const calls = (data2.items || []).filter(call => {
+          const callPhone = (call.contact?.phone || call.external_number || '').replace(/\D/g, '');
+          return callPhone.endsWith(cleanPhone.slice(-10));
+        });
+        return { statusCode: 200, headers, body: JSON.stringify({ calls, total: data2.items?.length || 0, contact: contactData }) };
       }
 
-      // Filter to recent calls within the time window
-      const calls = (data.items || []).filter(call => {
-        const callStarted = call.date_started || call.date_connected || 0;
-        return callStarted >= cutoff;
-      });
-
-      return { statusCode: 200, headers, body: JSON.stringify({ calls, total: data.items?.length || 0, raw: data }) };
+      // Last resort: return contact info if found, let CRM handle it
+      return {
+        statusCode: response2.status,
+        headers,
+        body: JSON.stringify({
+          error: data2,
+          contact: contactData,
+          note: 'Call listing requires admin API key. Use get_recording with a specific call_id instead.',
+          tried: [url, url2]
+        })
+      };
 
     } else if (action === 'get_recording') {
       const { call_id } = params;
