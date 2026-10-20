@@ -19,7 +19,12 @@ exports.handler = async (event, context) => {
   }
 
   try {
-    const params = event.queryStringParameters || {};
+    // Support POST body to avoid WAF blocking sensitive data in query string
+    let bodyParams = {};
+    if (event.body) {
+      try { bodyParams = JSON.parse(event.body); } catch(e) {}
+    }
+    const params = { ...( event.queryStringParameters || {}), ...bodyParams };
     const action = params.action;
 
     let url, response, data;
