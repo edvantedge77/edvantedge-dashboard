@@ -16300,6 +16300,7 @@ const QUALITY_DRIVE_FOLDERS = {
 
 const QUALITY_EXCLUDED_CLIENTS = ['Edvantedge','edvantedge'];
 const NETLIFY_BASE = 'https://edvantedgecrm.netlify.app/.netlify/functions';
+// NOTE: Dialpad auto-fetch disabled. Transcript arrives via webhook or manual entry.
 
 // ── Claude API Key helpers (kept for legacy settings UI) ─────────────────
 function getClaudeApiKey(){
@@ -16391,68 +16392,23 @@ async function triggerQualityCheck(lead){
 }
 
 async function runQualityPipeline(qId, phone, client, region, agentName, parentName, lead){
-  // ── Step 1: Find Dialpad call via Netlify proxy ──────────────────────
-  await sb.from('quality_results').update({processing_status:'finding_call'}).eq('id',qId);
-  let callId=null, transcript='', recordingUrl='';
-  const maxAttempts=10;
-  for(let attempt=0;attempt<maxAttempts;attempt++){
-    if(attempt>0) await new Promise(r=>setTimeout(r,30000));
-    try{
-      const r=await fetch(`${NETLIFY_BASE}/dialpad-proxy?action=find_call&phone=${encodeURIComponent(phone)}&minutes_ago=60`);
-      const data=await r.json();
-      const calls=data.calls||[];
-      if(calls.length>0){
-        callId=calls[0].id;
-        // Try to get transcript
-        const tr=await fetch(`${NETLIFY_BASE}/dialpad-proxy?action=get_transcript&call_id=${callId}`);
-        const txData=await tr.json();
-        const lines=txData.lines||txData.transcript_lines||[];
-        if(lines.length>0){
-          transcript=lines.map(l=>(l.speaker_name||l.speaker||'Speaker')+': '+(l.text||l.content||'')).join('\n');
-          break;
-        }
-      }
-    }catch(e){ console.warn('Dialpad attempt '+attempt+' error:',e); }
-  }
+  // Transcript arrives via Dialpad webhook (set up separately).
+  // Mark as pending — webhook will trigger scoring when transcript is ready.
+  await sb.from('quality_results').update({
+    processing_status: 'pending_transcript',
+    quality_status: 'Pending'
+  }).eq('id', qId);
+  // Nothing more to do here — webhook handler will call scoreQualityRecord(qId) when transcript arrives.
+}
 
-  if(!transcript){
-    await sb.from('quality_results').update({quality_status:'Error',processing_status:'no_transcript',ai_summary:'Transcript not available after 5 min'}).eq('id',qId);
-    return;
-  }
-  await sb.from('quality_results').update({transcript, processing_status:'downloading_recording'}).eq('id',qId);
+async function scoreQualityRecord(qId){
+  // Called by webhook handler (or manually) once transcript is stored in quality_results.
+  const {data:qRow} = await sb.from('quality_results').select('*').eq('id',qId).single();
+  if(!qRow || !qRow.transcript){ console.warn('scoreQualityRecord: no transcript for',qId); return; }
 
-  // ── Step 2: Download recording and upload to Google Drive ────────────
-  try{
-    const recR=await fetch(`${NETLIFY_BASE}/dialpad-proxy?action=get_recording&call_id=${callId}`);
-    const recData=await recR.json();
-    const recUrlRaw=recData.recording_url||recData.recording||'';
-    if(recUrlRaw){
-      const dlR=await fetch(`${NETLIFY_BASE}/dialpad-proxy?action=download_recording&recording_url=${encodeURIComponent(recUrlRaw)}`);
-      const dlData=await dlR.json();
-      if(dlData.base64){
-        const folderId=QUALITY_DRIVE_FOLDERS[client]?.[region]||null;
-        if(folderId){
-          const filename=`${client}_${region}_${phone}_${new Date().toISOString().slice(0,10)}.mp3`;
-          const upR=await fetch(`${NETLIFY_BASE}/drive-upload`,{
-            method:'POST',
-            headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({action:'upload',base64_audio:dlData.base64,filename,folder_id:folderId,content_type:dlData.contentType||'audio/mpeg'})
-          });
-          const upData=await upR.json();
-          if(upData.view_url){
-            recordingUrl=upData.view_url;
-            await sb.from('quality_results').update({
-              recording_url:recordingUrl,
-              drive_file_id:upData.file_id||null,
-              recorded_at:new Date().toISOString()
-            }).eq('id',qId);
-          }
-        }
-      }
-    }
-  }catch(e){ console.warn('Recording upload error (non-fatal):',e); }
+  const {client, region, transcript, agent_name:agentName, parent_name:parentName} = qRow;
 
-  // ── Step 3: Fetch prompt config from Prompt Manager ──────────────────
+  // ── Fetch prompt config from Prompt Manager ──────────────────
   await sb.from('quality_results').update({processing_status:'scoring'}).eq('id',qId);
   const {data:promptRow}=await sb.from('quality_prompts').select('*').eq('client',client).eq('is_active',true).single();
 
@@ -16475,7 +16431,7 @@ async function runQualityPipeline(qId, phone, client, region, agentName, parentN
     promptConfig={client, parameters:[], overall_instructions:'Score this call on professionalism, information gathering, and booking quality.'};
   }
 
-  // ── Step 4: Score with Claude via Netlify function ───────────────────
+  // ── Score with Claude via Netlify function ───────────────────
   const scoreR=await fetch(`${NETLIFY_BASE}/score-transcript`,{
     method:'POST',
     headers:{'Content-Type':'application/json'},
@@ -16905,17 +16861,10 @@ async function runQualityCleanup(){
   if(!expired||expired.length===0){ showToast('✅ No records to clean up.'); return; }
 
   try{
-    const r=await fetch(`${NETLIFY_BASE}/drive-upload`,{
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({action:'cleanup_expired',expired_records:expired.map(e=>({quality_result_id:e.id,drive_file_id:e.drive_file_id}))})
-    });
-    const result=await r.json();
-    const deleted=(result.results||[]).filter(x=>x.success).map(x=>x.id);
-    if(deleted.length>0){
-      await sb.from('quality_results').update({drive_file_id:null,recording_url:null,transcript:null}).in('id',deleted);
-    }
-    showToast(`🗑 Cleaned up ${deleted.length} expired records.`);
+    // Clear expired transcript data from Supabase (Drive cleanup disabled)
+    const ids = expired.map(e=>e.id);
+    await sb.from('quality_results').update({transcript:null}).in('id',ids);
+    showToast(`🗑 Cleaned up ${ids.length} expired records.`);
   }catch(e){ showToast('Cleanup error: '+e.message); }
 }
 
