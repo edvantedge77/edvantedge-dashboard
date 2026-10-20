@@ -25,28 +25,36 @@ exports.handler = async (event, context) => {
     let url, response, data;
 
     if (action === 'find_call') {
-      // Find call by phone number and approximate time
+      // Find call by phone number using Dialpad's search endpoint
       const { phone, minutes_ago = 60 } = params;
       if (!phone) return { statusCode: 400, headers, body: JSON.stringify({ error: 'phone required' }) };
 
       const cleanPhone = phone.replace(/\D/g, '');
       const cutoff = Math.floor(Date.now() / 1000) - (parseInt(minutes_ago) * 60);
 
-      url = `https://dialpad.com/api/v2/call?apikey=${DIALPAD_API_KEY}&limit=20`;
+      // Try searching by phone number directly
+      url = `https://dialpad.com/api/v2/call?apikey=${DIALPAD_API_KEY}&external_number=${encodeURIComponent('+' + cleanPhone)}&limit=10`;
       response = await fetch(url);
       data = await response.json();
 
       if (!response.ok) {
-        return { statusCode: response.status, headers, body: JSON.stringify({ error: data }) };
+        // Fallback: try without + prefix
+        url = `https://dialpad.com/api/v2/call?apikey=${DIALPAD_API_KEY}&external_number=${encodeURIComponent(cleanPhone)}&limit=10`;
+        response = await fetch(url);
+        data = await response.json();
+
+        if (!response.ok) {
+          return { statusCode: response.status, headers, body: JSON.stringify({ error: data, tried_url: url }) };
+        }
       }
 
-      // Filter calls matching phone and recent time
+      // Filter to recent calls within the time window
       const calls = (data.items || []).filter(call => {
-        const callPhone = (call.contact?.phone || call.external_number || '').replace(/\D/g, '');
-        return callPhone.endsWith(cleanPhone.slice(-10)) && call.date_started >= cutoff;
+        const callStarted = call.date_started || call.date_connected || 0;
+        return callStarted >= cutoff;
       });
 
-      return { statusCode: 200, headers, body: JSON.stringify({ calls, raw: data }) };
+      return { statusCode: 200, headers, body: JSON.stringify({ calls, total: data.items?.length || 0, raw: data }) };
 
     } else if (action === 'get_recording') {
       const { call_id } = params;
