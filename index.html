@@ -7152,9 +7152,14 @@ function bkExpectedDigits(){
     USA:11,Canada:11,
     Australia:11,
     UK:12,'United Kingdom':12,
-    'United Arab Emirates (UAE)':12,UAE:12,
-    Bahrain:12,Kuwait:12,Oman:12,Qatar:12,'Saudi Arabia':12,
-    Jordan:12,Lebanon:12,Iraq:12,Israel:12,Syria:12,Yemen:12,Iran:12
+    // UAE +971 (3) + 9 local = 12; Saudi +966 (3) + 9 = 12
+    'United Arab Emirates (UAE)':12,UAE:12,'Saudi Arabia':12,
+    // Qatar +974 (3) + 8 = 11; Bahrain +973 (3) + 8 = 11; Kuwait +965 (3) + 8 = 11; Oman +968 (3) + 8 = 11
+    Qatar:11,Bahrain:11,Kuwait:11,Oman:11,
+    // Jordan +962 (3) + 9 = 12; Iraq +964 (3) + 9 = 12; Israel +972 (3) + 8 = 11
+    Jordan:12,Iraq:12,Israel:11,
+    // Lebanon +961 (3) + 8 = 11; Syria +963 (2-3 varies); Yemen +967 (3) + 9 = 12; Iran +98 (2) + 10 = 12
+    Lebanon:11,Syria:12,Yemen:12,Iran:12
   };
   return rules[co]||null;
 }
@@ -7259,7 +7264,7 @@ function bksfPhoneInput(){
   if(!phEl)return;
   phEl.value=phEl.value.replace(/\D/g,'');
   const co=document.getElementById('bksf_co')?.value||'';
-  const rules={'USA':11,'United States':11,'Canada':11,'Australia':11,'UK':12,'United Kingdom':12,'United Arab Emirates (UAE)':12,'UAE':12,'Bahrain':12,'Kuwait':12,'Oman':12,'Qatar':12,'Saudi Arabia':12,'Jordan':12,'Lebanon':12,'Iraq':12,'Israel':12,'Syria':12,'Yemen':12,'Iran':12};
+  const rules={'USA':11,'United States':11,'Canada':11,'Australia':11,'UK':12,'United Kingdom':12,'United Arab Emirates (UAE)':12,'UAE':12,'Saudi Arabia':12,'Qatar':11,'Bahrain':11,'Kuwait':11,'Oman':11,'Jordan':12,'Iraq':12,'Israel':11,'Lebanon':11,'Syria':12,'Yemen':12,'Iran':12};
   const expected=rules[co];
   if(!expected||!errEl)return;
   const pc=(document.getElementById('bksf_pc')?.value||'').replace(/\D/g,'');
@@ -7347,6 +7352,8 @@ async function bkSaveBooking(){
   const cl=bkSelectedClient;if(!cl){bkToast('Please select a client','error');return;}
   const pn=(document.getElementById('bkf_pn')?.value||'').trim();
   const ph=(document.getElementById('bkf_ph')?.value||'').trim();
+  // Full phone = prefix digits + local digits (e.g. 61430922693 for AU)
+  const phFull=bkCombinedDigits()||ph;
 
   // ── Mandatory field validation ──
   const BK_REQ=[
@@ -7419,7 +7426,7 @@ async function bkSaveBooking(){
     agent:               (document.getElementById('bkf_ag')?.value||(S._bkEditId?S._bkEditData?.agent:null)||(S._bkActiveLead&&(S.users||[]).find(u=>u.id===S._bkActiveLead.agent_id)?.name)||S.user?.name||''),
     parent_name:         pn,
     child_name:          document.getElementById('bkf_cn')?.value||'',
-    phone_code:          ph,
+    phone_code:          phFull,
     alt_phone:           document.getElementById('bkf_alt')?.value||'',
     email:               document.getElementById('bkf_em')?.value||'',
     city:                document.getElementById('bkf_ci')?.value||'',
@@ -7450,7 +7457,7 @@ async function bkSaveBooking(){
       pushToTuritoIfNeeded(rec, ph);
     } else {
       // Check if phone already exists in DEMO-BOOKING for overwrite
-      const{data:ex}=await sb.from('DEMO-BOOKING').select('id').eq('phone_code',ph).limit(1);
+      const{data:ex}=await sb.from('DEMO-BOOKING').select('id').eq('phone_code',phFull).limit(1);
       if(ex&&ex.length>0){
         const{phone_code:_pc2,...overwriteRec}=rec;
         const{error}=await sb.from('DEMO-BOOKING').update(overwriteRec).eq('id',ex[0].id);
@@ -7476,7 +7483,7 @@ async function bkSaveBooking(){
       const bkCallId=(document.getElementById('bkf_cid')?.value||'').trim();
       const qLead={
         id: S._bkActiveLead?.id || ('bk_'+Date.now()),
-        phone_code: ph, phone: ph,
+        phone_code: phFull, phone: phFull,
         parent_name: pn,
         client_booked: cl,
         agent_id: S._bkActiveLead?.agent_id || S.user?.id || null,
