@@ -4899,6 +4899,14 @@ function renderAddLeadPage(){
           </button>`).join('')}
         </div>
         <input type="hidden" id="nl-sdp" value="">
+
+        <!-- Dialpad Call ID for transcript fetch -->
+        <div style="margin-top:12px">
+          <div style="font-size:12px;font-weight:700;color:#92400E;margin-bottom:6px">📞 Dialpad Call ID <span style="font-weight:400;color:#B45309">(optional — for auto transcript & quality score)</span></div>
+          <input id="nl-callid" placeholder="e.g. 5765432198765432 — paste from Dialpad call history"
+            style="width:100%;padding:8px 12px;border:1.5px solid #FCD34D;border-radius:8px;font-size:13px;background:#fffbeb;box-sizing:border-box">
+          <div style="font-size:11px;color:#92400E;margin-top:4px">Find it in Dialpad → Recent Calls → click the call → copy the ID from the URL</div>
+        </div>
       </div>
 
       <div id="nl-err" style="display:none;margin-top:12px;background:#FEE2E2;border:1px solid #FCA5A5;color:#991B1B;padding:10px 14px;border-radius:8px;font-size:12px"></div>
@@ -5025,6 +5033,9 @@ async function saveNewLead(bypassDuplicate){
     added_at:     new Date().toISOString().slice(0,10),
     updated_at:   new Date().toISOString(),
   };
+  // Capture Dialpad Call ID (not a DB column on crm_leads — kept on lead object for quality pipeline only)
+  const dialpadCallId=(document.getElementById('nl-callid')?.value||'').trim();
+  if(dialpadCallId) lead.dialpad_call_id = dialpadCallId;
 
   const {error} = await sb.from('crm_leads').insert(lead);
   if(error){
@@ -5054,6 +5065,8 @@ async function saveNewLead(bypassDuplicate){
 
   // Navigate to bookings if DS/DD, else back to All Leads
   if(disp==='Demo Scheduled'){
+    // ── QUALITY PIPELINE: trigger transcript fetch & scoring ──
+    triggerQualityCheck(lead).catch(e=>console.warn('Quality check error:',e));
     await loadAgentBookingLeads().catch(()=>{});
     goPage('bookings');
   } else {
@@ -6437,6 +6450,7 @@ function renderAgentBookingsView(){
   return '<div style="display:flex;flex-direction:column;gap:4px"><label style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:#8a9ab0">Agent</label><select id="bkf_ag" style="border:1px solid #e2e6ed;border-radius:6px;padding:7px 10px;font-size:12px;outline:none;width:100%">'+_agOpts+'</select></div>';
 })()
   +'<div style="display:flex;flex-direction:column;gap:4px;grid-column:1/-1"><label style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:#8a9ab0">Notes</label><textarea id="bkf_no" placeholder="Additional notes..." style="border:1px solid #e2e6ed;border-radius:6px;padding:7px 10px;font-size:12px;outline:none;width:100%;resize:vertical;min-height:55px"></textarea></div>'
+  +'<div style="display:flex;flex-direction:column;gap:4px;grid-column:1/-1"><label style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:#8a9ab0">📞 Dialpad Call ID <span style="font-weight:400;color:#8a9ab0;text-transform:none;letter-spacing:0">(optional — for auto transcript & quality score)</span></label><input id="bkf_cid" placeholder="e.g. 5765432198765432 — paste from Dialpad call history" style="border:1px solid #e2e6ed;border-radius:6px;padding:7px 10px;font-size:12px;outline:none;width:100%"><div style="font-size:10px;color:#8a9ab0;margin-top:3px">Find in Dialpad → Recent Calls → click the call → copy ID from the URL</div></div>'
   +'</div>'
   +'</div>'  // end modal-body
   +'<div style="display:flex;justify-content:flex-end;gap:7px;padding:12px 18px;border-top:1px solid #e2e6ed;position:sticky;bottom:0;background:#fff">'
@@ -7446,8 +7460,27 @@ async function bkSaveBooking(){
       }
     }
     document.getElementById('bkAddModal').style.display='none';
+    const _wasEdit=!!S._bkEditId;
     S._bkEditId=null;
     _bkLoaded=false;bkLoad();
+
+    // ── QUALITY PIPELINE: trigger transcript fetch & scoring ──
+    // Only for new bookings (not edits), using the active lead + Call ID from form
+    if(!_wasEdit){
+      const bkCallId=(document.getElementById('bkf_cid')?.value||'').trim();
+      const qLead={
+        id: S._bkActiveLead?.id || ('bk_'+Date.now()),
+        phone_code: ph, phone: ph,
+        parent_name: pn,
+        client_booked: cl,
+        agent_id: S._bkActiveLead?.agent_id || S.user?.id || null,
+        agent_name: S._bkActiveLead?.agent_name || S.user?.name || '',
+        Country: document.getElementById('bkf_co')?.value||'',
+        Zone: document.getElementById('bkf_zo')?.value||'',
+        dialpad_call_id: bkCallId||null,
+      };
+      triggerQualityCheck(qLead).catch(e=>console.warn('Quality check error:',e));
+    }
   }catch(e){bkToast('Error: '+(e.message||'Unknown error'),'error');console.error('bkSave:',e);}
 }
 
@@ -16372,14 +16405,19 @@ async function triggerQualityCheck(lead){
   const agentId=lead.agent_id||S.user?.id||null;
   const agentName=lead.agent_name||S.user?.name||'';
   const parentName=lead.parent_name||'';
+  const dialpadCallId=(lead.dialpad_call_id||'').trim()||null;
 
   // Insert pending record immediately
-  const {data:qRow,error:qErr}=await sb.from('quality_results').insert({
+  const insertRow={
     lead_id:lead.id, phone, parent_name:parentName, client, region,
     agent_id:agentId, agent_name:agentName,
-    quality_status:'Pending', processing_status:'finding_call',
+    quality_status:'Pending',
+    processing_status: dialpadCallId ? 'fetching_transcript' : 'pending_transcript',
     disposed_at:new Date().toISOString(),
-  }).select().single();
+  };
+  if(dialpadCallId) insertRow.dialpad_call_id = dialpadCallId;
+
+  const {data:qRow,error:qErr}=await sb.from('quality_results').insert(insertRow).select().single();
   if(qErr){ console.warn('quality_results insert error:',qErr); return; }
   const qId=qRow.id;
   showToast('📋 Quality check started for '+phone);
@@ -16392,13 +16430,67 @@ async function triggerQualityCheck(lead){
 }
 
 async function runQualityPipeline(qId, phone, client, region, agentName, parentName, lead){
-  // Transcript arrives via Dialpad webhook (set up separately).
-  // Mark as pending — webhook will trigger scoring when transcript is ready.
-  await sb.from('quality_results').update({
-    processing_status: 'pending_transcript',
-    quality_status: 'Pending'
-  }).eq('id', qId);
-  // Nothing more to do here — webhook handler will call scoreQualityRecord(qId) when transcript arrives.
+  const dialpadCallId=(lead?.dialpad_call_id||'').trim();
+
+  if(!dialpadCallId){
+    // No Call ID provided — mark pending so admin can add call ID later
+    await sb.from('quality_results').update({
+      processing_status: 'pending_transcript',
+      quality_status: 'Pending',
+      ai_summary: 'Awaiting Dialpad Call ID — agent can add it from the Quality tab.'
+    }).eq('id', qId);
+    return;
+  }
+
+  // ── Fetch transcript from Dialpad via proxy ───────────────────
+  try {
+    await sb.from('quality_results').update({processing_status:'fetching_transcript'}).eq('id',qId);
+
+    const tRes = await fetch(`${NETLIFY_BASE}/dialpad-proxy`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({action:'get_transcript', call_id: dialpadCallId})
+    });
+    const tData = await tRes.json();
+
+    if(!tRes.ok || tData.error){
+      const msg = tData.error || `HTTP ${tRes.status}`;
+      await sb.from('quality_results').update({
+        processing_status:'transcript_error',
+        quality_status:'Manual Review',
+        ai_summary:`Could not fetch transcript: ${msg}`
+      }).eq('id',qId);
+      showToast(`⚠️ Transcript fetch failed for call ${dialpadCallId}: ${msg}`);
+      return;
+    }
+
+    const transcriptText = tData.transcript || '';
+    if(!transcriptText){
+      await sb.from('quality_results').update({
+        processing_status:'no_transcript',
+        quality_status:'Manual Review',
+        ai_summary:'Transcript is empty — call may still be processing in Dialpad.'
+      }).eq('id',qId);
+      showToast('⚠️ Transcript is empty — try again in a few minutes.');
+      return;
+    }
+
+    // Store transcript and proceed to scoring
+    await sb.from('quality_results').update({
+      transcript: transcriptText,
+      processing_status:'scoring'
+    }).eq('id',qId);
+
+    await scoreQualityRecord(qId);
+
+  } catch(e) {
+    console.warn('runQualityPipeline error:',e);
+    await sb.from('quality_results').update({
+      processing_status:'failed',
+      quality_status:'Manual Review',
+      ai_summary:'Pipeline error: '+e.message
+    }).eq('id',qId).catch(()=>{});
+  }
 }
 
 async function scoreQualityRecord(qId){
