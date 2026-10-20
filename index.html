@@ -5604,8 +5604,14 @@ function renderBkStandaloneModal(){
       // All known prefixes ordered longest → shortest to avoid stripping '1' off '971'.
       const raw=prePhone||'';
       const digits=raw.replace(/\D/g,''); // all digits, no +
-      if(!raw.startsWith('+')){return digits;} // no + prefix stored — just show raw digits
+      // Prefixes longest→shortest so '971' isn't mistaken for '97' then '1'
       const prefixes=['971','966','974','973','972','968','967','965','964','963','962','961','98','91','61','44','1'];
+      // Determine expected prefix for the pre-selected country
+      const pcMap2={'USA':'+1','United States':'+1','UK':'+44','United Kingdom':'+44','Australia':'+61','India':'+91','Canada':'+1','United Arab Emirates (UAE)':'+971','UAE':'+971','Bahrain':'+973','Kuwait':'+965','Oman':'+968','Qatar':'+974','Saudi Arabia':'+966','Jordan':'+962','Lebanon':'+961','Iraq':'+964','Israel':'+972','Syria':'+963','Yemen':'+967','Iran':'+98'};
+      const expectedPrefix=(pcMap2[preCountry]||'+1').replace('+','');
+      // Strip leading + if present, then strip country prefix from digit string
+      if(digits.startsWith(expectedPrefix)){return digits.slice(expectedPrefix.length);}
+      // Fallback: try all known prefixes
       for(let i=0;i<prefixes.length;i++){
         if(digits.startsWith(prefixes[i])){return digits.slice(prefixes[i].length);}
       }
