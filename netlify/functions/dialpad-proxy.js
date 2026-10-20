@@ -32,18 +32,19 @@ exports.handler = async (event, context) => {
       const cleanPhone = phone.replace(/\D/g, '');
       const cutoff = Math.floor(Date.now() / 1000) - (parseInt(minutes_ago) * 60);
 
-      // Try Dialpad stats/call search endpoint with date range
+      // Use Authorization header instead of query string (avoids WAF blocking)
+      const dialpadHeaders = { 'Authorization': `Bearer ${DIALPAD_API_KEY}` };
       const now = Math.floor(Date.now() / 1000);
       const dateStart = new Date((now - parseInt(minutes_ago) * 60) * 1000).toISOString().split('T')[0];
 
       // Try searching via contact endpoint first
-      url = `https://dialpad.com/api/v2/contacts?apikey=${DIALPAD_API_KEY}&phone=${encodeURIComponent('+' + cleanPhone)}`;
-      response = await fetch(url);
+      url = `https://dialpad.com/api/v2/contacts?phone=${encodeURIComponent('+' + cleanPhone)}`;
+      response = await fetch(url, { headers: dialpadHeaders });
       const contactData = await response.json();
 
-      // Try call search with starred/recent calls
-      const url2 = `https://dialpad.com/api/v2/call?apikey=${DIALPAD_API_KEY}&date_start=${dateStart}&limit=50`;
-      const response2 = await fetch(url2);
+      // Try call search with date range
+      const url2 = `https://dialpad.com/api/v2/call?date_start=${dateStart}&limit=50`;
+      const response2 = await fetch(url2, { headers: dialpadHeaders });
       const data2 = await response2.json();
 
       if (response2.ok) {
@@ -70,8 +71,8 @@ exports.handler = async (event, context) => {
       const { call_id } = params;
       if (!call_id) return { statusCode: 400, headers, body: JSON.stringify({ error: 'call_id required' }) };
 
-      url = `https://dialpad.com/api/v2/call/${call_id}?apikey=${DIALPAD_API_KEY}`;
-      response = await fetch(url);
+      url = `https://dialpad.com/api/v2/call/${call_id}`;
+      response = await fetch(url, { headers: { 'Authorization': `Bearer ${DIALPAD_API_KEY}` } });
       data = await response.json();
 
       return { statusCode: response.status, headers, body: JSON.stringify(data) };
@@ -80,8 +81,8 @@ exports.handler = async (event, context) => {
       const { call_id } = params;
       if (!call_id) return { statusCode: 400, headers, body: JSON.stringify({ error: 'call_id required' }) };
 
-      url = `https://dialpad.com/api/v2/transcript/${call_id}?apikey=${DIALPAD_API_KEY}`;
-      response = await fetch(url);
+      url = `https://dialpad.com/api/v2/transcript/${call_id}`;
+      response = await fetch(url, { headers: { 'Authorization': `Bearer ${DIALPAD_API_KEY}` } });
       data = await response.json();
 
       return { statusCode: response.status, headers, body: JSON.stringify(data) };
