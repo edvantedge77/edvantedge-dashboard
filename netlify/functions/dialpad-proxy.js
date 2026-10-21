@@ -61,23 +61,29 @@ exports.handler = async (event) => {
       };
     }
 
-    // Extract transcript text — Dialpad returns an array of lines or a single string
+    // Extract transcript text — handle all Dialpad response formats
     let transcript = '';
-    if (typeof data.transcript === 'string') {
-      transcript = data.transcript;
-    } else if (Array.isArray(data.transcript)) {
-      // Format: [{speaker, content, ...}]
-      transcript = data.transcript
+    const parseSegments = (arr) =>
+      arr
+        .filter(seg => seg.type === 'transcript' || seg.content)
         .map(seg => {
-          const speaker = seg.speaker_name || seg.speaker || 'Speaker';
+          const speaker = seg.name || seg.speaker_name || seg.speaker || 'Speaker';
           const content = seg.content || seg.text || '';
           return `${speaker}: ${content}`;
         })
         .join('\n');
+
+    if (Array.isArray(data)) {
+      // Root-level array of transcript segments
+      transcript = parseSegments(data);
+    } else if (typeof data.transcript === 'string') {
+      transcript = data.transcript;
+    } else if (Array.isArray(data.transcript)) {
+      transcript = parseSegments(data.transcript);
+    } else if (Array.isArray(data.items)) {
+      transcript = parseSegments(data.items);
     } else if (Array.isArray(data.lines)) {
-      transcript = data.lines
-        .map(l => `${l.speaker || 'Speaker'}: ${l.content || l.text || ''}`)
-        .join('\n');
+      transcript = parseSegments(data.lines);
     } else if (data.content) {
       transcript = data.content;
     }
