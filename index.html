@@ -16639,6 +16639,7 @@ function renderQualityPage(){
           <th style="background:#1A2D42;color:rgba(255,255,255,.7);font-size:10px;text-transform:uppercase;padding:9px 12px;text-align:center">Recording</th>
           <th style="background:#1A2D42;color:rgba(255,255,255,.7);font-size:10px;text-transform:uppercase;padding:9px 12px;text-align:left">Date</th>
           <th style="background:#1A2D42;color:rgba(255,255,255,.7);font-size:10px;text-transform:uppercase;padding:9px 12px;text-align:center">Detail</th>
+          <th style="background:#1A2D42;color:rgba(255,255,255,.7);font-size:10px;text-transform:uppercase;padding:9px 12px;text-align:center">Transcript</th>
         </tr></thead><tbody id="quality-tbody">
         ${(rows||[]).length===0
           ?`<tr><td colspan="${isAdm?10:9}" style="padding:2rem;text-align:center;color:var(--text3)">No quality records yet. Records appear after Demo Scheduled dispositions are saved.</td></tr>`
@@ -16669,6 +16670,17 @@ function renderQualityPage(){
               <td style="padding:9px 12px;text-align:center">
                 ${hasDetail?`<button class="btn btn-sm btn-outline" onclick="showQualityDetail('${r.id}')" style="font-size:11px;padding:3px 8px">View</button>`:'<span style="color:var(--text3);font-size:11px">—</span>'}
               </td>
+              <td style="padding:9px 12px;text-align:center">
+                ${r.processing_status==='pending_transcript'
+                  ?`<button onclick="qAddCallId('${r.id}')" style="font-size:11px;padding:3px 9px;border-radius:6px;border:1px solid #2471a3;background:#eaf4fb;color:#2471a3;cursor:pointer;font-weight:600">📞 Add Call ID</button>`
+                  :r.processing_status==='transcript_error'
+                  ?`<button onclick="qRetryTranscript('${r.id}','${h(r.dialpad_call_id||'')}')" style="font-size:11px;padding:3px 9px;border-radius:6px;border:1px solid #e74c3c;background:#fdecea;color:#c0392b;cursor:pointer;font-weight:600">🔄 Retry</button>`
+                  :r.processing_status==='fetching_transcript'
+                  ?'<span style="font-size:11px;color:#f39c12">⏳ Fetching…</span>'
+                  :r.transcript
+                  ?'<span style="font-size:11px;color:#27ae60">✅ Done</span>'
+                  :'<span style="color:var(--text3);font-size:11px">—</span>'}
+              </td>
             </tr>`;
           }).join('')}
         </tbody>
@@ -16687,6 +16699,60 @@ function renderQualityPage(){
     window._qualityRows = rows||[];
   },0);
   return`<div class="pg-title">✅ Quality Scoring</div><div id="quality-content"><div style="padding:2rem;color:var(--text3)">⏳ Loading quality records…</div></div>`;
+}
+
+async function qAddCallId(qId){
+  const callId=prompt('Enter the 16-digit Dialpad Call ID for this record:');
+  if(!callId)return;
+  const clean=callId.replace(/\D/g,'');
+  if(clean.length!==16){showToast('⚠️ Call ID must be exactly 16 digits','error');return;}
+  showToast('⏳ Saving Call ID and fetching transcript…');
+  await sb.from('quality_results').update({dialpad_call_id:clean,processing_status:'fetching_transcript'}).eq('id',qId);
+  // Fetch transcript via proxy
+  try{
+    const tRes=await fetch(`${NETLIFY_BASE}/dialpad-proxy`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'get_transcript',call_id:clean})});
+    const tData=await tRes.json();
+    if(!tRes.ok||tData.error){
+      await sb.from('quality_results').update({processing_status:'transcript_error',ai_summary:'Transcript error: '+(tData.error||'unknown')}).eq('id',qId);
+      showToast('⚠️ Could not fetch transcript: '+(tData.error||'unknown'),'error');
+    } else {
+      const transcript=tData.transcript||'';
+      await sb.from('quality_results').update({transcript,processing_status:'transcript_ready'}).eq('id',qId);
+      showToast('✅ Transcript fetched! Quality scoring will run shortly.');
+      // Trigger scoring
+      scoreQualityRecord(qId).catch(()=>{});
+    }
+  }catch(e){
+    await sb.from('quality_results').update({processing_status:'transcript_error',ai_summary:'Fetch error: '+e.message}).eq('id',qId);
+    showToast('⚠️ Fetch failed: '+e.message,'error');
+  }
+  setTimeout(()=>renderQualityPage(),2000);
+}
+
+async function qRetryTranscript(qId,existingCallId){
+  const callId=existingCallId||prompt('Enter the 16-digit Dialpad Call ID:');
+  if(!callId)return;
+  const clean=callId.replace(/\D/g,'');
+  if(clean.length!==16){showToast('⚠️ Call ID must be exactly 16 digits','error');return;}
+  showToast('⏳ Retrying transcript fetch…');
+  await sb.from('quality_results').update({processing_status:'fetching_transcript'}).eq('id',qId);
+  try{
+    const tRes=await fetch(`${NETLIFY_BASE}/dialpad-proxy`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'get_transcript',call_id:clean})});
+    const tData=await tRes.json();
+    if(!tRes.ok||tData.error){
+      await sb.from('quality_results').update({processing_status:'transcript_error',ai_summary:'Transcript error: '+(tData.error||'unknown')}).eq('id',qId);
+      showToast('⚠️ Retry failed: '+(tData.error||'unknown'),'error');
+    } else {
+      const transcript=tData.transcript||'';
+      await sb.from('quality_results').update({transcript,dialpad_call_id:clean,processing_status:'transcript_ready'}).eq('id',qId);
+      showToast('✅ Transcript fetched! Scoring will run shortly.');
+      scoreQualityRecord(qId).catch(()=>{});
+    }
+  }catch(e){
+    await sb.from('quality_results').update({processing_status:'transcript_error',ai_summary:'Fetch error: '+e.message}).eq('id',qId);
+    showToast('⚠️ Fetch failed: '+e.message,'error');
+  }
+  setTimeout(()=>renderQualityPage(),2000);
 }
 
 function qFilterRows(){
