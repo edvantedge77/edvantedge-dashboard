@@ -5827,6 +5827,11 @@ async function bkStandaloneSave(){
       if(error)throw error;
       showToast('Booking updated');
       pushToTuritoIfNeeded(rec, pc);
+      // If Call ID was just added on edit, update quality_results so transcript can be fetched
+      const prevCallId=(S._bkEditData?.dialpad_call_id||'').trim();
+      if(callidVal&&callidVal!==prevCallId){
+        sb.from('quality_results').update({dialpad_call_id:callidVal,processing_status:'pending_transcript'}).eq('lead_id',S._bkEditId).then(()=>{}).catch(()=>{});
+      }
     }else{
       rec.created_at=new Date().toISOString();
       const{error}=await sb.from('DEMO-BOOKING').insert(rec);
