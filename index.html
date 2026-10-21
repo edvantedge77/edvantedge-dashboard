@@ -16696,7 +16696,7 @@ function renderQualityPage(){
             const scoreColor=scoreVal>=70?'#27ae60':scoreVal>=50?'#f39c12':'#c0392b';
             const date=r.disposed_at?new Date(r.disposed_at).toLocaleDateString('en-IN',{day:'2-digit',month:'short'}):'—';
             const summary=r.ai_summary?r.ai_summary.slice(0,80)+(r.ai_summary.length>80?'…':''):'—';
-            const hasDetail=r.processing_status==='complete'||r.parameters_detail||r.ai_summary;
+            const hasDetail=(r.processing_status==='complete'||r.parameters_detail||r.ai_summary)&&r.processing_status!=='pending_transcript'&&r.quality_status!=='Pending';
             const rowDate=r.disposed_at?r.disposed_at.slice(0,10):'';
             return`<tr class="q-row" data-status="${r.quality_status||''}" data-agent="${(r.agent_name||'').toLowerCase()}" data-parent="${(r.parent_name||'').toLowerCase()}" data-date="${rowDate}" data-phone="${(r.phone||r.phone_number||'').toLowerCase()}" data-client="${(r.client||'').toLowerCase()}" data-country="${(r.region||r.country||'').toLowerCase()}" style="border-bottom:1px solid var(--border)">
               ${isAdm?`<td style="padding:9px 12px;font-size:12px">${h(r.agent_name||'—')}</td>`:''}
