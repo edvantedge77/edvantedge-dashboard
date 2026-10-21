@@ -16602,7 +16602,7 @@ function renderQualityPage(){
     if(!el) return;
     const isAdm=isInternalAdmin();
     let q=sb.from('quality_results').select('*').order('disposed_at',{ascending:false}).limit(200);
-    if(!isAdm) q=q.ilike('agent_name',S.user.user_metadata?.name||S.user.email?.split('@')[0]||'');
+    if(!isAdm){const agentMatch=S.user.user_metadata?.name||S.user.email?.split('@')[0]||'';q=q.ilike('agent_name','%'+agentMatch+'%');}
     const{data:rows,error}=await q;
     if(error){ el.innerHTML=`<div style="padding:2rem;color:var(--red)">Error loading: ${error.message}</div>`; return; }
 
