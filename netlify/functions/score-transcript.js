@@ -4,7 +4,7 @@
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 async function callGemini(apiKey, prompt, attempt = 0) {
-  const models = ['gemini-2.5-flash', 'gemini-3.8-flash'];
+  const models = ['gemini-3.8-flash', 'gemini-3.6-flash'];
   const model = models[attempt % models.length];
 
   const res = await fetch(
