@@ -76,6 +76,7 @@ You must evaluate the transcript and return a JSON response with this exact stru
 }
 
 Rules:
+- overall_status MUST be exactly one of: "VALID", "INVALID", or "MANUAL_REVIEW" — no other values allowed
 - overall_status is INVALID if any MANDATORY parameter fails
 - overall_status is VALID if weighted_score >= 70 and no mandatory failures
 - overall_status is MANUAL_REVIEW if weighted_score is 50-69 or there is ambiguity
@@ -96,7 +97,7 @@ ${transcript}`;
         model: 'openai/gpt-oss-120b',
         messages: [{ role: 'user', content: fullPrompt }],
         temperature: 0.2,
-        max_tokens: 2000
+        max_tokens: 8000
       })
     });
 
@@ -116,6 +117,11 @@ ${transcript}`;
     try {
       const jsonMatch = content.match(/\{[\s\S]*\}/);
       scored = JSON.parse(jsonMatch ? jsonMatch[0] : content);
+      // Normalize overall_status to exactly VALID / INVALID / MANUAL_REVIEW
+      const s = (scored.overall_status || '').toUpperCase();
+      scored.overall_status = s === 'VALID' || s === 'PASS' ? 'VALID'
+                             : s === 'INVALID' || s === 'FAIL' ? 'INVALID'
+                             : 'MANUAL_REVIEW';
     } catch (parseErr) {
       return {
         statusCode: 200,
