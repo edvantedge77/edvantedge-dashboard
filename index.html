@@ -16627,9 +16627,10 @@ function renderQualityPage(){
   setTimeout(async()=>{
     const el=document.getElementById('quality-content');
     if(!el) return;
+    if(!S.user||!S.user.role){el.innerHTML='<div style="padding:2rem;color:var(--red)">⚠️ Session not ready. Please refresh the page.</div>';return;}
     const isAdm=isInternalAdmin();
     let q=sb.from('quality_results').select('*').order('disposed_at',{ascending:false}).limit(200);
-    if(!isAdm){const agentMatch=S.user.name||S.user.username||'';if(!agentMatch){el.innerHTML='<div style="padding:2rem;color:var(--red)">⚠️ Could not identify your agent profile. Please log out and log back in.</div>';return;}q=q.ilike('agent_name','%'+agentMatch+'%');}
+    if(!isAdm){const agentMatch=(S.user.name||S.user.username||'').trim();if(!agentMatch){el.innerHTML='<div style="padding:2rem;color:var(--red)">⚠️ Could not identify your agent profile. Please log out and log back in.</div>';return;}q=q.ilike('agent_name',agentMatch);}
     const{data:rows,error}=await q;
     if(error){ el.innerHTML=`<div style="padding:2rem;color:var(--red)">Error loading: ${error.message}</div>`; return; }
 
@@ -16812,8 +16813,7 @@ async function qResetCallId(qId){
     score:null,
     weighted_score:null,
     ai_summary:'Reset by user — awaiting correct Call ID.',
-    scored_at:null,
-    quality_data:null
+    scored_at:null
   }).eq('id',qId);
   if(error){showToast('❌ Reset failed: '+error.message,'error');return;}
   showToast('✅ Record reset — please enter the correct Call ID.');
