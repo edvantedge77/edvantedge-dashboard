@@ -40,7 +40,7 @@ exports.handler = async (event) => {
   }
 
   try {
-    const url = `https://dialpad.com/api/v2/transcript/${encodeURIComponent(call_id)}`;
+    const url = `https://dialpad.com/api/v2/transcripts/${encodeURIComponent(call_id)}`;
     const res = await fetch(url, {
       method: 'GET',
       headers: {
