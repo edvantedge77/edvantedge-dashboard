@@ -6,6 +6,9 @@
 [functions]
   node_bundler = "esbuild"
 
+[functions."dialpad-proxy"]
+  timeout = 26
+
 [[headers]]
   for = "/api/*"
   [headers.values]
