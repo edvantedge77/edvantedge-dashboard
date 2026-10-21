@@ -16704,7 +16704,7 @@ function renderQualityPage(){
             const scoreColor=scoreVal>=70?'#27ae60':scoreVal>=50?'#f39c12':'#c0392b';
             const date=r.disposed_at?new Date(r.disposed_at).toLocaleDateString('en-IN',{day:'2-digit',month:'short'}):'—';
             const summary=r.ai_summary?r.ai_summary.slice(0,80)+(r.ai_summary.length>80?'…':''):'—';
-            const hasDetail=(r.processing_status==='complete'||r.parameters_detail||r.ai_summary)&&r.processing_status!=='pending_transcript'&&r.quality_status!=='Pending';
+            const _qs=(r.quality_status||'').toLowerCase().trim();const _ps=(r.processing_status||'').toLowerCase().trim();const hasDetail=((_ps==='complete')||r.parameters_detail||(r.ai_summary&&r.ai_summary!=='Awaiting Call ID'&&!r.ai_summary.startsWith('Reset by')))&&_ps!=='pending_transcript'&&_qs!=='pending';
             const rowDate=r.disposed_at?r.disposed_at.slice(0,10):'';
             return`<tr class="q-row" data-status="${r.quality_status||''}" data-agent="${(r.agent_name||'').toLowerCase()}" data-parent="${(r.parent_name||'').toLowerCase()}" data-date="${rowDate}" data-phone="${(r.phone||r.phone_number||'').toLowerCase()}" data-client="${(r.client||'').toLowerCase()}" data-country="${(r.region||r.country||'').toLowerCase()}" style="border-bottom:1px solid var(--border)">
               ${isAdm?`<td style="padding:9px 12px;font-size:12px">${h(r.agent_name||'—')}</td>`:''}
@@ -16763,6 +16763,12 @@ function renderQualityPage(){
 
     // Store rows for detail lookup
     window._qualityRows = rows||[];
+    // Force-set date inputs to current month (innerHTML value attr may not set input.value)
+    const _qNow=new Date();
+    const _qMs=new Date(_qNow.getFullYear(),_qNow.getMonth(),1).toISOString().slice(0,10);
+    const _qMe=_qNow.toISOString().slice(0,10);
+    const _qDf=document.getElementById('q-filter-date-from');if(_qDf&&!_qDf.value)_qDf.value=_qMs;
+    const _qDt=document.getElementById('q-filter-date-to');if(_qDt&&!_qDt.value)_qDt.value=_qMe;
 
     // Auto-trigger scoring for any transcript_ready records
     const readyToScore=(rows||[]).filter(r=>r.processing_status==='transcript_ready'&&r.transcript);
@@ -16935,9 +16941,15 @@ function qFilterRows(){
   });
 }
 function qClearFilters(){
-  ['q-filter-agent','q-filter-phone','q-filter-parent','q-filter-client','q-filter-country','q-filter-status','q-filter-date-from','q-filter-date-to'].forEach(id=>{
+  ['q-filter-agent','q-filter-phone','q-filter-parent','q-filter-client','q-filter-country','q-filter-status'].forEach(id=>{
     const el=document.getElementById(id); if(el) el.value='';
   });
+  // Reset dates to current month (not blank)
+  const _now=new Date();
+  const _ms=new Date(_now.getFullYear(),_now.getMonth(),1).toISOString().slice(0,10);
+  const _me=_now.toISOString().slice(0,10);
+  const _df=document.getElementById('q-filter-date-from');if(_df)_df.value=_ms;
+  const _dt=document.getElementById('q-filter-date-to');if(_dt)_dt.value=_me;
   qFilterRows();
 }
 
