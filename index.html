@@ -16629,7 +16629,11 @@ function renderQualityPage(){
     if(!el) return;
     if(!S.user||!S.user.role){el.innerHTML='<div style="padding:2rem;color:var(--red)">⚠️ Session not ready. Please refresh the page.</div>';return;}
     const isAdm=isInternalAdmin();
-    let q=sb.from('quality_results').select('*').order('disposed_at',{ascending:false});
+    // Default to current month
+    const now=new Date();
+    const monthStart=new Date(now.getFullYear(),now.getMonth(),1).toISOString().slice(0,10);
+    const monthEnd=new Date(now.getFullYear(),now.getMonth()+1,0).toISOString().slice(0,10);
+    let q=sb.from('quality_results').select('*').gte('disposed_at',monthStart).lte('disposed_at',monthEnd+'T23:59:59').order('disposed_at',{ascending:false});
     if(!isAdm){const agentMatch=(S.user.name||S.user.username||'').trim();if(!agentMatch){el.innerHTML='<div style="padding:2rem;color:var(--red)">⚠️ Could not identify your agent profile. Please log out and log back in.</div>';return;}q=q.ilike('agent_name',agentMatch);}
     // Fetch all records in pages to avoid Supabase 1000-row default cap
     let rows=[];let from=0;const PAGE=1000;
@@ -16665,8 +16669,8 @@ function renderQualityPage(){
             <option value="">All Countries</option>
             <option value="uk">UK</option><option value="us">US</option><option value="aus">AUS</option><option value="india">India</option>
           </select>
-          <input id="q-filter-date-from" type="date" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px" onchange="qFilterRows()">
-          <input id="q-filter-date-to" type="date" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px" onchange="qFilterRows()">
+          <input id="q-filter-date-from" type="date" value="${monthStart}" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px" onchange="qFilterRows()">
+          <input id="q-filter-date-to" type="date" value="${now.toISOString().slice(0,10)}" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px" onchange="qFilterRows()">
           <select id="q-filter-status" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px" onchange="qFilterRows()">
             <option value="">All Status</option>
             <option>Valid</option><option>Invalid</option><option>Manual Review</option><option>Pending</option>
