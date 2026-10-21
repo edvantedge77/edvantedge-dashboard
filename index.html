@@ -16530,7 +16530,7 @@ async function scoreQualityRecord(qId){
   const {data:qRow} = await sb.from('quality_results').select('*').eq('id',qId).single();
   if(!qRow || !qRow.transcript){ console.warn('scoreQualityRecord: no transcript for',qId); return; }
 
-  const {client, region, transcript, agent_name:agentName, parent_name:parentName} = qRow;
+  const {client, region, transcript, agent_name:agentName, parent_name:parentName, phone} = qRow;
 
   // ── Fetch prompt config from Prompt Manager ──────────────────
   await sb.from('quality_results').update({processing_status:'scoring'}).eq('id',qId);
@@ -16667,13 +16667,24 @@ function renderQualityPage(){
               <td style="padding:9px 12px;text-align:center">
                 <span style="font-size:11px;font-weight:700;padding:3px 10px;border-radius:20px;background:${stBg};color:${stColor}">${r.quality_status==='Pending'?'⏳ Pending':r.quality_status||'—'}</span>
               </td>
-              <td style="padding:9px 12px;font-size:11px;color:var(--text2);max-width:200px">${r.quality_status==='Pending'?'<span style="color:#f39c12;font-size:11px">Scoring in progress…</span>':h(summary)}</td>
+              <td style="padding:9px 12px;font-size:11px;color:var(--text2);max-width:200px">${
+                r.processing_status==='scoring'?'<span style="color:#f39c12;font-size:11px">⚙️ Scoring…</span>'
+                :r.processing_status==='fetching_transcript'?'<span style="color:#f39c12;font-size:11px">⏳ Fetching transcript…</span>'
+                :r.processing_status==='transcript_ready'?'<span style="color:#2471a3;font-size:11px">📝 Transcript ready — scoring starting…</span>'
+                :r.processing_status==='transcript_error'?'<span style="color:#c0392b;font-size:11px">⚠️ Transcript error</span>'
+                :r.processing_status==='pending_transcript'?'<span style="color:#888;font-size:11px">Awaiting Call ID</span>'
+                :h(summary)
+              }</td>
               <td style="padding:9px 12px;text-align:center">
                 ${r.recording_url?`<a href="${h(r.recording_url)}" target="_blank" style="font-size:11px;color:var(--primary);text-decoration:none">🎵 Listen</a>`:'<span style="color:var(--text3);font-size:11px">—</span>'}
               </td>
               <td style="padding:9px 12px;font-size:11px;color:var(--text3)">${date}</td>
               <td style="padding:9px 12px;text-align:center">
-                ${hasDetail?`<button class="btn btn-sm btn-outline" onclick="showQualityDetail('${r.id}')" style="font-size:11px;padding:3px 8px">View</button>`:'<span style="color:var(--text3);font-size:11px">—</span>'}
+                ${hasDetail
+                  ?`<button class="btn btn-sm btn-outline" onclick="showQualityDetail('${r.id}')" style="font-size:11px;padding:3px 8px">View</button>`
+                  :(r.processing_status==='transcript_ready'||r.processing_status==='scoring')&&r.transcript
+                  ?`<button onclick="qScoreNow('${r.id}')" style="font-size:11px;padding:3px 9px;border-radius:6px;border:1px solid #7d3c98;background:#f5eef8;color:#7d3c98;cursor:pointer;font-weight:600">⚙️ Score Now</button>`
+                  :'<span style="color:var(--text3);font-size:11px">—</span>'}
               </td>
               <td style="padding:9px 12px;text-align:center">
                 ${r.processing_status==='pending_transcript'
@@ -16702,6 +16713,15 @@ function renderQualityPage(){
 
     // Store rows for detail lookup
     window._qualityRows = rows||[];
+
+    // Auto-trigger scoring for any transcript_ready records
+    const readyToScore=(rows||[]).filter(r=>r.processing_status==='transcript_ready'&&r.transcript);
+    if(readyToScore.length>0){
+      console.log(`[Quality] Auto-scoring ${readyToScore.length} transcript_ready record(s)…`);
+      for(const r of readyToScore){
+        scoreQualityRecord(r.id).catch(e=>console.warn('Auto-score failed for',r.id,e));
+      }
+    }
   },0);
   return`<div class="pg-title">✅ Quality Scoring</div><div id="quality-content"><div style="padding:2rem;color:var(--text3)">⏳ Loading quality records…</div></div>`;
 }
@@ -16758,6 +16778,17 @@ async function qRetryTranscript(qId,existingCallId){
     showToast('⚠️ Fetch failed: '+e.message,'error');
   }
   setTimeout(()=>renderQualityPage(),2000);
+}
+
+async function qScoreNow(qId){
+  showToast('⚙️ Scoring started…');
+  try{
+    await scoreQualityRecord(qId);
+    showToast('✅ Scoring complete! Refreshing…');
+  }catch(e){
+    showToast('⚠️ Scoring failed: '+e.message,'error');
+  }
+  setTimeout(()=>goPage('quality'),2000);
 }
 
 function qFilterRows(){
