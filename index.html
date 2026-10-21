@@ -5463,7 +5463,7 @@ function bkStandaloneOpen(lead){
   render();
 }
 
-function bkStandaloneEdit(id){
+async function bkStandaloneEdit(id){
   const bk=_bkBookings.find(b=>b.id===id);
   if(!bk)return;
   _bkSelClient=bk.client||'';
@@ -5471,7 +5471,10 @@ function bkStandaloneEdit(id){
   // already handled when it was first created, so don't re-prompt for it,
   // just restore the highlighted client card as before.
   _bkFormConfirmed=new Set(bk.client?[bk.client]:[]);
-  S._bkActiveLead=null;S._bkEditId=id;S._bkEditData=bk;
+  // Fetch additional_call_ids from quality_results for this booking
+  const{data:qr}=await sb.from('quality_results').select('additional_call_ids').eq('lead_id',id).maybeSingle();
+  const bkWithExtras={...bk,additional_call_ids:(qr?.additional_call_ids||[])};
+  S._bkActiveLead=null;S._bkEditId=id;S._bkEditData=bkWithExtras;
   S.modal={type:'bkStandalone'};
   render();
   if(_bkSelClient)setTimeout(()=>bkClientPick(_bkSelClient),100);
@@ -5651,8 +5654,17 @@ function renderBkStandaloneModal(){
     +'</div>'
     +'<div style="margin-bottom:16px"><label style="font-size:10px;font-weight:700;color:#8a9ab0;text-transform:uppercase;display:block;margin-bottom:4px">Notes</label>'
     +'<textarea id="bksf_no" rows="3" style="width:100%;padding:9px 11px;border:1.5px solid #e2e6ed;border-radius:7px;font-size:13px;box-sizing:border-box;resize:vertical">'+(isEdit?(ed.notes||''):(lead?.comments||''))+'</textarea></div>'
-    +'<div style="margin-bottom:16px"><label style="font-size:10px;font-weight:700;color:#8a9ab0;text-transform:uppercase;display:block;margin-bottom:4px">Dialpad Call ID</label>'
+    +'<div style="margin-bottom:16px"><label style="font-size:10px;font-weight:700;color:#8a9ab0;text-transform:uppercase;display:block;margin-bottom:4px">Dialpad Call ID (Primary)</label>'
     +'<input id="bksf_callid" type="text" inputmode="numeric" maxlength="16" placeholder="16-digit Dialpad Call ID" value="'+(isEdit?(ed.dialpad_call_id||''):'').replace(/"/g,'&quot;')+'" oninput="this.value=this.value.replace(/\\D/g,\'\').slice(0,16)" style="width:100%;padding:9px 11px;border:1.5px solid #e2e6ed;border-radius:7px;font-size:13px;box-sizing:border-box;letter-spacing:1px;font-family:monospace"></div>'
+    +(isEdit?'<div style="margin-bottom:16px;background:#f0f7ff;border:1px solid #c8e0f7;border-radius:8px;padding:12px">'
+      +'<label style="font-size:10px;font-weight:700;color:#2471a3;text-transform:uppercase;display:block;margin-bottom:8px">📞 Additional Call IDs (if call dropped &amp; reconnected)</label>'
+      +(ed.additional_call_ids&&ed.additional_call_ids.length>0
+        ?ed.additional_call_ids.map((cid,i)=>'<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px"><span style="background:#e8f5e9;padding:3px 8px;border-radius:4px;font-family:monospace;font-size:12px">'+cid+'</span><span style="color:#888;font-size:11px">Call '+(i+2)+'</span></div>').join('')
+        :'<div style="color:#888;font-size:11px;margin-bottom:8px">No additional call IDs yet</div>')
+      +'<div style="display:flex;gap:6px;margin-top:4px"><input id="bksf_extra_callid" type="text" inputmode="numeric" maxlength="16" placeholder="Paste extra Call ID..." oninput="this.value=this.value.replace(/\\D/g,\'\').slice(0,16)" style="flex:1;padding:7px 10px;border:1.5px solid #c8e0f7;border-radius:6px;font-size:12px;font-family:monospace">'
+      +'<button type="button" onclick="bkAddExtraCallId()" style="padding:7px 12px;background:#2471a3;color:#fff;border:none;border-radius:6px;font-size:12px;font-weight:700;cursor:pointer">➕ Add</button></div>'
+      +'</div>'
+    :'')
 
     +'<div id="bksf_err" style="color:#e74c3c;font-size:12px;margin-bottom:10px;display:none"></div>'
     +'</div>'
@@ -16723,7 +16735,7 @@ function renderQualityPage(){
                   :r.processing_status==='fetching_transcript'
                   ?'<span style="font-size:11px;color:#f39c12">⏳ Fetching…</span>'
                   :r.transcript
-                  ?'<span style="font-size:11px;color:#27ae60">✅ Done</span>'
+                  ?`<span style="font-size:11px;color:#27ae60">✅ Done</span> <button onclick="qAddCallId('${r.id}')" title="Add another call ID" style="font-size:10px;padding:2px 6px;border-radius:4px;border:1px solid #27ae60;background:#e8f5e9;color:#27ae60;cursor:pointer;margin-left:3px">➕</button>`
                   :'<span style="color:var(--text3);font-size:11px">—</span>'}
               </td>
             </tr>`;
@@ -16781,6 +16793,29 @@ async function qAddCallId(qId){
     showToast('⚠️ Fetch failed: '+e.message,'error');
   }
   setTimeout(()=>renderQualityPage(),2000);
+}
+
+// ── Add extra Call ID from booking edit form ──────────────────────────────────
+async function bkAddExtraCallId(){
+  const input=document.getElementById('bksf_extra_callid');
+  const newId=(input?.value||'').trim().replace(/\D/g,'');
+  if(newId.length!==16){showToast('⚠️ Call ID must be exactly 16 digits','error');return;}
+  const bookingId=S._bkEditId;
+  if(!bookingId){showToast('⚠️ No booking selected','error');return;}
+  // Find quality_results row for this booking
+  const{data:qRow,error:qErr}=await sb.from('quality_results').select('id,additional_call_ids,dialpad_call_id').eq('lead_id',bookingId).maybeSingle();
+  if(qErr||!qRow){showToast('⚠️ Quality record not found for this booking','error');return;}
+  const existing=qRow.additional_call_ids||[];
+  if(existing.includes(newId)||newId===qRow.dialpad_call_id){showToast('⚠️ This Call ID is already added','warning');return;}
+  const updated=[...existing,newId];
+  const{error}=await sb.from('quality_results').update({additional_call_ids:updated}).eq('id',qRow.id);
+  if(error){showToast('❌ Error saving: '+error.message,'error');return;}
+  if(input)input.value='';
+  showToast('✅ Call ID added — re-score will include all calls');
+  // Update cached edit data and re-render form to show updated list
+  if(S._bkEditData) S._bkEditData.additional_call_ids=updated;
+  render();
+  if(_bkSelClient)setTimeout(()=>bkClientPick(_bkSelClient),100);
 }
 
 async function qRetryTranscript(qId,existingCallId){
