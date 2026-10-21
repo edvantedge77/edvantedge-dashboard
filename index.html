@@ -16633,7 +16633,8 @@ function renderQualityPage(){
     const now=new Date();
     const monthStart=new Date(now.getFullYear(),now.getMonth(),1).toISOString().slice(0,10);
     const monthEnd=new Date(now.getFullYear(),now.getMonth()+1,0).toISOString().slice(0,10);
-    let q=sb.from('quality_results').select('*').gte('disposed_at',monthStart).lte('disposed_at',monthEnd+'T23:59:59').order('disposed_at',{ascending:false});
+    const qCols='id,lead_id,agent_name,phone,parent_name,client,region,quality_status,score,weighted_score,ai_summary,processing_status,dialpad_call_id,additional_call_ids,disposed_at,scored_at,recording_url,parameters_detail';
+    let q=sb.from('quality_results').select(qCols).gte('disposed_at',monthStart).lte('disposed_at',monthEnd+'T23:59:59').order('disposed_at',{ascending:false});
     if(!isAdm){const agentMatch=(S.user.name||S.user.username||'').trim();if(!agentMatch){el.innerHTML='<div style="padding:2rem;color:var(--red)">⚠️ Could not identify your agent profile. Please log out and log back in.</div>';return;}q=q.ilike('agent_name',agentMatch);}
     // Fetch all records in pages to avoid Supabase 1000-row default cap
     let rows=[];let from=0;const PAGE=1000;
