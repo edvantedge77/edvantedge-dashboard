@@ -16624,8 +16624,17 @@ function renderQualityPage(){
         <div class="card-title">Call Quality Results</div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
           ${isAdm?`
-          <input id="q-filter-agent" type="text" placeholder="🔍 Agent name" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;width:130px" oninput="qFilterRows()">
-          <input id="q-filter-parent" type="text" placeholder="🔍 Parent name" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;width:130px" oninput="qFilterRows()">
+          <input id="q-filter-agent" type="text" placeholder="🔍 Agent" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;width:110px" oninput="qFilterRows()">
+          <input id="q-filter-phone" type="text" placeholder="🔍 Phone" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;width:120px" oninput="qFilterRows()">
+          <input id="q-filter-parent" type="text" placeholder="🔍 Parent" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;width:110px" oninput="qFilterRows()">
+          <select id="q-filter-client" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px" onchange="qFilterRows()">
+            <option value="">All Clients</option>
+            <option>Vedantu</option><option>Codingal</option><option>Codyoung</option><option>Connect2Learn</option><option>Flyingstars</option><option>Turito</option><option>JustTutor</option>
+          </select>
+          <select id="q-filter-country" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px" onchange="qFilterRows()">
+            <option value="">All Countries</option>
+            <option value="uk">UK</option><option value="us">US</option><option value="aus">AUS</option><option value="india">India</option>
+          </select>
           <input id="q-filter-date-from" type="date" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px" onchange="qFilterRows()">
           <input id="q-filter-date-to" type="date" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px" onchange="qFilterRows()">
           `:''}
@@ -16633,6 +16642,7 @@ function renderQualityPage(){
             <option value="">All Status</option>
             <option>Valid</option><option>Invalid</option><option>Manual Review</option><option>Pending</option>
           </select>
+          <button class="btn btn-sm btn-outline" onclick="qClearFilters()">✕ Clear</button>
           <button class="btn btn-sm btn-outline" onclick="goPage('quality')">↻ Refresh</button>
         </div>
       </div>
@@ -16662,7 +16672,7 @@ function renderQualityPage(){
             const summary=r.ai_summary?r.ai_summary.slice(0,80)+(r.ai_summary.length>80?'…':''):'—';
             const hasDetail=r.processing_status==='complete'||r.parameters_detail||r.ai_summary;
             const rowDate=r.disposed_at?r.disposed_at.slice(0,10):'';
-            return`<tr class="q-row" data-status="${r.quality_status||''}" data-agent="${(r.agent_name||'').toLowerCase()}" data-parent="${(r.parent_name||'').toLowerCase()}" data-date="${rowDate}" style="border-bottom:1px solid var(--border)">
+            return`<tr class="q-row" data-status="${r.quality_status||''}" data-agent="${(r.agent_name||'').toLowerCase()}" data-parent="${(r.parent_name||'').toLowerCase()}" data-date="${rowDate}" data-phone="${(r.phone||r.phone_number||'').toLowerCase()}" data-client="${(r.client||'').toLowerCase()}" data-country="${(r.region||r.country||'').toLowerCase()}" style="border-bottom:1px solid var(--border)">
               ${isAdm?`<td style="padding:9px 12px;font-size:12px">${h(r.agent_name||'—')}</td>`:''}
               <td style="padding:9px 12px;font-size:12px;font-family:monospace">${h(r.phone||'—')}</td>
               <td style="padding:9px 12px;font-size:12px">${h(r.parent_name||'—')}</td>
@@ -16801,20 +16811,37 @@ function qFilterRows(){
   const statusFilter=(document.getElementById('q-filter-status')?.value||'').toLowerCase();
   const agentFilter=(document.getElementById('q-filter-agent')?.value||'').toLowerCase();
   const parentFilter=(document.getElementById('q-filter-parent')?.value||'').toLowerCase();
+  const phoneFilter=(document.getElementById('q-filter-phone')?.value||'').toLowerCase();
+  const clientFilter=(document.getElementById('q-filter-client')?.value||'').toLowerCase();
+  const countryFilter=(document.getElementById('q-filter-country')?.value||'').toLowerCase();
   const dateFrom=document.getElementById('q-filter-date-from')?.value||'';
   const dateTo=document.getElementById('q-filter-date-to')?.value||'';
+  let visible=0;
   document.querySelectorAll('#quality-tbody .q-row').forEach(row=>{
     const rowStatus=(row.dataset.status||'').toLowerCase();
     const rowAgent=(row.dataset.agent||'').toLowerCase();
     const rowParent=(row.dataset.parent||'').toLowerCase();
+    const rowPhone=(row.dataset.phone||'').toLowerCase();
+    const rowClient=(row.dataset.client||'').toLowerCase();
+    const rowCountry=(row.dataset.country||'').toLowerCase();
     const rowDate=row.dataset.date||'';
-    const statusOk=!statusFilter||rowStatus===statusFilter;
-    const agentOk=!agentFilter||rowAgent.includes(agentFilter);
-    const parentOk=!parentFilter||rowParent.includes(parentFilter);
-    const dateFromOk=!dateFrom||rowDate>=dateFrom;
-    const dateToOk=!dateTo||rowDate<=dateTo;
-    row.style.display=(statusOk&&agentOk&&parentOk&&dateFromOk&&dateToOk)?'':'none';
+    const ok=(!statusFilter||rowStatus===statusFilter)
+      &&(!agentFilter||rowAgent.includes(agentFilter))
+      &&(!parentFilter||rowParent.includes(parentFilter))
+      &&(!phoneFilter||rowPhone.includes(phoneFilter))
+      &&(!clientFilter||rowClient===clientFilter)
+      &&(!countryFilter||rowCountry.includes(countryFilter))
+      &&(!dateFrom||rowDate>=dateFrom)
+      &&(!dateTo||rowDate<=dateTo);
+    row.style.display=ok?'':'none';
+    if(ok) visible++;
   });
+}
+function qClearFilters(){
+  ['q-filter-agent','q-filter-phone','q-filter-parent','q-filter-client','q-filter-country','q-filter-status','q-filter-date-from','q-filter-date-to'].forEach(id=>{
+    const el=document.getElementById(id); if(el) el.value='';
+  });
+  qFilterRows();
 }
 
 function showQualityDetail(id){
