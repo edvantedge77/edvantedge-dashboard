@@ -16623,13 +16623,12 @@ function renderQualityPage(){
       <div class="card-hdr">
         <div class="card-title">Call Quality Results</div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-          ${isAdm?`
-          <input id="q-filter-agent" type="text" placeholder="🔍 Agent" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;width:110px" oninput="qFilterRows()">
-          <input id="q-filter-phone" type="text" placeholder="🔍 Phone" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;width:120px" oninput="qFilterRows()">
+          ${isAdm?`<input id="q-filter-agent" type="text" placeholder="🔍 Agent" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;width:110px" oninput="qFilterRows()">`:``}
+          <input id="q-filter-phone" type="text" placeholder="🔍 Phone" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;width:130px" oninput="qFilterRows()">
           <input id="q-filter-parent" type="text" placeholder="🔍 Parent" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;width:110px" oninput="qFilterRows()">
           <select id="q-filter-client" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px" onchange="qFilterRows()">
             <option value="">All Clients</option>
-            <option>Vedantu</option><option>Codingal</option><option>Codyoung</option><option>Connect2Learn</option><option>Flyingstars</option><option>Turito</option><option>JustTutor</option>
+            <option>Vedantu</option><option>Codingal</option><option>Codeyoung</option><option>Connect2Learn</option><option>Flyingstars</option><option>Turito</option><option>JustTutors</option><option>GMT</option><option>Meet My Coach</option>
           </select>
           <select id="q-filter-country" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px" onchange="qFilterRows()">
             <option value="">All Countries</option>
@@ -16637,7 +16636,6 @@ function renderQualityPage(){
           </select>
           <input id="q-filter-date-from" type="date" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px" onchange="qFilterRows()">
           <input id="q-filter-date-to" type="date" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px" onchange="qFilterRows()">
-          `:''}
           <select id="q-filter-status" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px" onchange="qFilterRows()">
             <option value="">All Status</option>
             <option>Valid</option><option>Invalid</option><option>Manual Review</option><option>Pending</option>
