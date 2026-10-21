@@ -16602,7 +16602,7 @@ function renderQualityPage(){
     if(!el) return;
     const isAdm=isInternalAdmin();
     let q=sb.from('quality_results').select('*').order('disposed_at',{ascending:false}).limit(200);
-    if(!isAdm) q=q.eq('agent_id',S.user.id);
+    if(!isAdm) q=q.ilike('agent_name',S.user.user_metadata?.name||S.user.email?.split('@')[0]||'');
     const{data:rows,error}=await q;
     if(error){ el.innerHTML=`<div style="padding:2rem;color:var(--red)">Error loading: ${error.message}</div>`; return; }
 
@@ -16622,8 +16622,13 @@ function renderQualityPage(){
     <div class="card">
       <div class="card-hdr">
         <div class="card-title">Call Quality Results</div>
-        <div style="display:flex;gap:8px">
-          ${isAdm?'<select id="q-filter-agent" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px" onchange="renderQualityPage()"><option value="">All Agents</option></select>':''}
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          ${isAdm?`
+          <input id="q-filter-agent" type="text" placeholder="🔍 Agent name" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;width:130px" oninput="qFilterRows()">
+          <input id="q-filter-parent" type="text" placeholder="🔍 Parent name" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;width:130px" oninput="qFilterRows()">
+          <input id="q-filter-date-from" type="date" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px" onchange="qFilterRows()">
+          <input id="q-filter-date-to" type="date" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px" onchange="qFilterRows()">
+          `:''}
           <select id="q-filter-status" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px" onchange="qFilterRows()">
             <option value="">All Status</option>
             <option>Valid</option><option>Invalid</option><option>Manual Review</option><option>Pending</option>
@@ -16656,7 +16661,8 @@ function renderQualityPage(){
             const date=r.disposed_at?new Date(r.disposed_at).toLocaleDateString('en-IN',{day:'2-digit',month:'short'}):'—';
             const summary=r.ai_summary?r.ai_summary.slice(0,80)+(r.ai_summary.length>80?'…':''):'—';
             const hasDetail=r.processing_status==='complete'||r.parameters_detail||r.ai_summary;
-            return`<tr class="q-row" data-status="${r.quality_status||''}" style="border-bottom:1px solid var(--border)">
+            const rowDate=r.disposed_at?r.disposed_at.slice(0,10):'';
+            return`<tr class="q-row" data-status="${r.quality_status||''}" data-agent="${(r.agent_name||'').toLowerCase()}" data-parent="${(r.parent_name||'').toLowerCase()}" data-date="${rowDate}" style="border-bottom:1px solid var(--border)">
               ${isAdm?`<td style="padding:9px 12px;font-size:12px">${h(r.agent_name||'—')}</td>`:''}
               <td style="padding:9px 12px;font-size:12px;font-family:monospace">${h(r.phone||'—')}</td>
               <td style="padding:9px 12px;font-size:12px">${h(r.parent_name||'—')}</td>
@@ -16793,9 +16799,21 @@ async function qScoreNow(qId){
 
 function qFilterRows(){
   const statusFilter=(document.getElementById('q-filter-status')?.value||'').toLowerCase();
+  const agentFilter=(document.getElementById('q-filter-agent')?.value||'').toLowerCase();
+  const parentFilter=(document.getElementById('q-filter-parent')?.value||'').toLowerCase();
+  const dateFrom=document.getElementById('q-filter-date-from')?.value||'';
+  const dateTo=document.getElementById('q-filter-date-to')?.value||'';
   document.querySelectorAll('#quality-tbody .q-row').forEach(row=>{
     const rowStatus=(row.dataset.status||'').toLowerCase();
-    row.style.display=(!statusFilter||rowStatus===statusFilter)?'':'none';
+    const rowAgent=(row.dataset.agent||'').toLowerCase();
+    const rowParent=(row.dataset.parent||'').toLowerCase();
+    const rowDate=row.dataset.date||'';
+    const statusOk=!statusFilter||rowStatus===statusFilter;
+    const agentOk=!agentFilter||rowAgent.includes(agentFilter);
+    const parentOk=!parentFilter||rowParent.includes(parentFilter);
+    const dateFromOk=!dateFrom||rowDate>=dateFrom;
+    const dateToOk=!dateTo||rowDate<=dateTo;
+    row.style.display=(statusOk&&agentOk&&parentOk&&dateFromOk&&dateToOk)?'':'none';
   });
 }
 
