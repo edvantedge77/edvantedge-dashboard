@@ -1,6 +1,41 @@
 // Netlify Function: score-transcript.js
 // Scores call transcript using Google Gemini AI with client-specific prompts
 
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+async function callGemini(apiKey, prompt, attempt = 0) {
+  const models = ['gemini-2.5-flash', 'gemini-3.8-flash'];
+  const model = models[attempt % models.length];
+
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: {
+          temperature: 0.2,
+          maxOutputTokens: 2000,
+          responseMimeType: 'application/json'
+        }
+      })
+    }
+  );
+
+  const data = await res.json();
+
+  if (res.status === 503 || res.status === 429) {
+    // Rate limited or overloaded — retry with next model after delay
+    if (attempt < 3) {
+      await sleep(3000 * (attempt + 1));
+      return callGemini(apiKey, prompt, attempt + 1);
+    }
+  }
+
+  return { res, data, model };
+}
+
 exports.handler = async (event, context) => {
   const headers = {
     'Access-Control-Allow-Origin': '*',
@@ -86,29 +121,13 @@ Rules:
 TRANSCRIPT TO EVALUATE:
 ${transcript}`;
 
-    const geminiRes = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${GEMINI_API_KEY}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: fullPrompt }] }],
-          generationConfig: {
-            temperature: 0.2,
-            maxOutputTokens: 2000,
-            responseMimeType: 'application/json'
-          }
-        })
-      }
-    );
-
-    const geminiData = await geminiRes.json();
+    const { res: geminiRes, data: geminiData, model } = await callGemini(GEMINI_API_KEY, fullPrompt);
 
     if (!geminiRes.ok) {
       return {
         statusCode: geminiRes.status,
         headers,
-        body: JSON.stringify({ error: 'Gemini API error', details: geminiData })
+        body: JSON.stringify({ error: 'Gemini API error', model, details: geminiData })
       };
     }
 
