@@ -1,40 +1,5 @@
 // Netlify Function: score-transcript.js
-// Scores call transcript using Google Gemini AI with client-specific prompts
-
-const sleep = (ms) => new Promise(r => setTimeout(r, ms));
-
-async function callGemini(apiKey, prompt, attempt = 0) {
-  const models = ['gemini-3.8-flash', 'gemini-3.6-flash'];
-  const model = models[attempt % models.length];
-
-  const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: {
-          temperature: 0.2,
-          maxOutputTokens: 2000,
-          responseMimeType: 'application/json'
-        }
-      })
-    }
-  );
-
-  const data = await res.json();
-
-  if (res.status === 503 || res.status === 429) {
-    // Rate limited or overloaded — retry with next model after delay
-    if (attempt < 3) {
-      await sleep(3000 * (attempt + 1));
-      return callGemini(apiKey, prompt, attempt + 1);
-    }
-  }
-
-  return { res, data, model };
-}
+// Scores call transcript using Groq AI with client-specific prompts
 
 exports.handler = async (event, context) => {
   const headers = {
@@ -48,9 +13,9 @@ exports.handler = async (event, context) => {
     return { statusCode: 200, headers, body: '' };
   }
 
-  const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-  if (!GEMINI_API_KEY) {
-    return { statusCode: 500, headers, body: JSON.stringify({ error: 'Gemini API key not configured' }) };
+  const GROQ_API_KEY = process.env.GROQ_API_KEY_TRANSCRIPT;
+  if (!GROQ_API_KEY) {
+    return { statusCode: 500, headers, body: JSON.stringify({ error: 'Groq API key not configured' }) };
   }
 
   try {
@@ -121,17 +86,32 @@ Rules:
 TRANSCRIPT TO EVALUATE:
 ${transcript}`;
 
-    const { res: geminiRes, data: geminiData, model } = await callGemini(GEMINI_API_KEY, fullPrompt);
+    const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${GROQ_API_KEY}`
+      },
+      body: JSON.stringify({
+        model: 'llama-3.1-70b-versatile',
+        messages: [{ role: 'user', content: fullPrompt }],
+        temperature: 0.2,
+        max_tokens: 2000,
+        response_format: { type: 'json_object' }
+      })
+    });
 
-    if (!geminiRes.ok) {
+    const groqData = await groqRes.json();
+
+    if (!groqRes.ok) {
       return {
-        statusCode: geminiRes.status,
+        statusCode: groqRes.status,
         headers,
-        body: JSON.stringify({ error: 'Gemini API error', model, details: geminiData })
+        body: JSON.stringify({ error: 'Groq API error', details: groqData })
       };
     }
 
-    const content = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    const content = groqData.choices?.[0]?.message?.content || '';
 
     let scored;
     try {
