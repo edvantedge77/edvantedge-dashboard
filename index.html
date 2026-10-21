@@ -16629,9 +16629,12 @@ function renderQualityPage(){
     if(!el) return;
     if(!S.user||!S.user.role){el.innerHTML='<div style="padding:2rem;color:var(--red)">⚠️ Session not ready. Please refresh the page.</div>';return;}
     const isAdm=isInternalAdmin();
-    let q=sb.from('quality_results').select('*').order('disposed_at',{ascending:false}).limit(200);
+    let q=sb.from('quality_results').select('*').order('disposed_at',{ascending:false});
     if(!isAdm){const agentMatch=(S.user.name||S.user.username||'').trim();if(!agentMatch){el.innerHTML='<div style="padding:2rem;color:var(--red)">⚠️ Could not identify your agent profile. Please log out and log back in.</div>';return;}q=q.ilike('agent_name',agentMatch);}
-    const{data:rows,error}=await q;
+    // Fetch all records in pages to avoid Supabase 1000-row default cap
+    let rows=[];let from=0;const PAGE=1000;
+    while(true){const{data:page,error}=await q.range(from,from+PAGE-1);if(error){el.innerHTML=`<div style="padding:2rem;color:var(--red)">Error loading: ${error.message}</div>`;return;}if(!page||!page.length)break;rows=[...rows,...page];if(page.length<PAGE)break;from+=PAGE;}
+    const error=null;
     if(error){ el.innerHTML=`<div style="padding:2rem;color:var(--red)">Error loading: ${error.message}</div>`; return; }
 
     const counts={Valid:0,Invalid:0,'Manual Review':0,Pending:0,Error:0};
