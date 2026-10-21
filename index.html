@@ -5659,7 +5659,7 @@ function renderBkStandaloneModal(){
     +(isEdit?'<div style="margin-bottom:16px;background:#f0f7ff;border:1px solid #c8e0f7;border-radius:8px;padding:12px">'
       +'<label style="font-size:10px;font-weight:700;color:#2471a3;text-transform:uppercase;display:block;margin-bottom:8px">📞 Additional Call IDs (if call dropped &amp; reconnected)</label>'
       +(ed.additional_call_ids&&ed.additional_call_ids.length>0
-        ?ed.additional_call_ids.map((cid,i)=>'<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px"><span style="background:#e8f5e9;padding:3px 8px;border-radius:4px;font-family:monospace;font-size:12px">'+cid+'</span><span style="color:#888;font-size:11px">Call '+(i+2)+'</span></div>').join('')
+        ?ed.additional_call_ids.map((cid,i)=>'<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px"><span style="background:#e8f5e9;padding:3px 8px;border-radius:4px;font-family:monospace;font-size:12px">'+cid+'</span><span style="color:#888;font-size:11px">Call '+(i+2)+'</span><button type="button" onclick="bkRemoveExtraCallId(\''+cid+'\')" title="Remove this Call ID" style="margin-left:auto;padding:2px 7px;border-radius:4px;border:1px solid #e74c3c;background:#fdecea;color:#c0392b;font-size:11px;cursor:pointer;font-weight:700">✕ Remove</button></div>').join('')
         :'<div style="color:#888;font-size:11px;margin-bottom:8px">No additional call IDs yet</div>')
       +'<div style="display:flex;gap:6px;margin-top:4px"><input id="bksf_extra_callid" type="text" inputmode="numeric" maxlength="16" placeholder="Paste extra Call ID..." oninput="this.value=this.value.replace(/\\D/g,\'\').slice(0,16)" style="flex:1;padding:7px 10px;border:1.5px solid #c8e0f7;border-radius:6px;font-size:12px;font-family:monospace">'
       +'<button type="button" onclick="bkAddExtraCallId()" style="padding:7px 12px;background:#2471a3;color:#fff;border:none;border-radius:6px;font-size:12px;font-weight:700;cursor:pointer">➕ Add</button></div>'
@@ -16629,7 +16629,7 @@ function renderQualityPage(){
     if(!el) return;
     const isAdm=isInternalAdmin();
     let q=sb.from('quality_results').select('*').order('disposed_at',{ascending:false}).limit(200);
-    if(!isAdm){const agentMatch=S.user.user_metadata?.name||S.user.email?.split('@')[0]||'';q=q.ilike('agent_name','%'+agentMatch+'%');}
+    if(!isAdm){const agentMatch=S.user.name||S.user.username||'';if(!agentMatch){el.innerHTML='<div style="padding:2rem;color:var(--red)">⚠️ Could not identify your agent profile. Please log out and log back in.</div>';return;}q=q.ilike('agent_name','%'+agentMatch+'%');}
     const{data:rows,error}=await q;
     if(error){ el.innerHTML=`<div style="padding:2rem;color:var(--red)">Error loading: ${error.message}</div>`; return; }
 
@@ -16650,7 +16650,7 @@ function renderQualityPage(){
       <div class="card-hdr">
         <div class="card-title">Call Quality Results</div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-          ${isAdm?`<input id="q-filter-agent" type="text" placeholder="🔍 Agent" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;width:110px" oninput="qFilterRows()">`:``}
+          ${isAdm?`<select id="q-filter-agent" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px" onchange="qFilterRows()"><option value="">All Agents</option>${(S.users||[]).filter(u=>u.role==='agent'||u.role==='team_lead').sort((a,b)=>(a.name||'').localeCompare(b.name||'')).map(u=>`<option value="${(u.name||'').toLowerCase()}">${u.name||u.username}</option>`).join('')}</select>`:``}
           <input id="q-filter-phone" type="text" placeholder="🔍 Phone" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;width:130px" oninput="qFilterRows()">
           <input id="q-filter-parent" type="text" placeholder="🔍 Parent" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;width:110px" oninput="qFilterRows()">
           <select id="q-filter-client" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px" onchange="qFilterRows()">
@@ -16731,11 +16731,11 @@ function renderQualityPage(){
                 ${r.processing_status==='pending_transcript'
                   ?`<button onclick="qAddCallId('${r.id}')" style="font-size:11px;padding:3px 9px;border-radius:6px;border:1px solid #2471a3;background:#eaf4fb;color:#2471a3;cursor:pointer;font-weight:600">📞 Add Call ID</button>`
                   :r.processing_status==='transcript_error'
-                  ?`<button onclick="qRetryTranscript('${r.id}','${h(r.dialpad_call_id||'')}')" style="font-size:11px;padding:3px 9px;border-radius:6px;border:1px solid #e74c3c;background:#fdecea;color:#c0392b;cursor:pointer;font-weight:600">🔄 Retry</button>`
+                  ?`<button onclick="qRetryTranscript('${r.id}','${h(r.dialpad_call_id||'')}')" style="font-size:11px;padding:3px 9px;border-radius:6px;border:1px solid #e74c3c;background:#fdecea;color:#c0392b;cursor:pointer;font-weight:600">🔄 Retry</button> <button onclick="qResetCallId('${r.id}')" title="Wrong Call ID? Reset and re-enter" style="font-size:10px;padding:2px 6px;border-radius:4px;border:1px solid #888;background:#f5f5f5;color:#555;cursor:pointer;margin-left:3px">↺ Reset</button>`
                   :r.processing_status==='fetching_transcript'
                   ?'<span style="font-size:11px;color:#f39c12">⏳ Fetching…</span>'
                   :r.transcript
-                  ?`<span style="font-size:11px;color:#27ae60">✅ Done</span> <button onclick="qAddCallId('${r.id}')" title="Add another call ID" style="font-size:10px;padding:2px 6px;border-radius:4px;border:1px solid #27ae60;background:#e8f5e9;color:#27ae60;cursor:pointer;margin-left:3px">➕</button>`
+                  ?`<span style="font-size:11px;color:#27ae60">✅ Done</span> <button onclick="qAddCallId('${r.id}')" title="Add another call ID" style="font-size:10px;padding:2px 6px;border-radius:4px;border:1px solid #27ae60;background:#e8f5e9;color:#27ae60;cursor:pointer;margin-left:3px">➕</button> <button onclick="qResetCallId('${r.id}')" title="Reset — clear Call ID and transcript if wrong" style="font-size:10px;padding:2px 6px;border-radius:4px;border:1px solid #e74c3c;background:#fdecea;color:#c0392b;cursor:pointer;margin-left:2px">🔄 Reset</button>`
                   :'<span style="color:var(--text3);font-size:11px">—</span>'}
               </td>
             </tr>`;
@@ -16777,22 +16777,47 @@ async function qAddCallId(qId){
   // Fetch transcript via proxy
   try{
     const tRes=await fetch(`${NETLIFY_BASE}/dialpad-proxy`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'get_transcript',call_id:clean})});
-    const tData=await tRes.json();
+    let tData={};
+    try{tData=await tRes.json();}catch(jsonErr){tData={error:'Server returned invalid response (status '+tRes.status+')'};}
     if(!tRes.ok||tData.error){
-      await sb.from('quality_results').update({processing_status:'transcript_error',ai_summary:'Transcript error: '+(tData.error||'unknown')}).eq('id',qId);
-      showToast('⚠️ Could not fetch transcript: '+(tData.error||'unknown'),'error');
+      const errMsg=tData.error||('HTTP '+tRes.status);
+      await sb.from('quality_results').update({processing_status:'pending_transcript',ai_summary:'Transcript fetch failed: '+errMsg+'. Please check the Call ID and try again.'}).eq('id',qId);
+      showToast('⚠️ Could not fetch transcript: '+errMsg+'. Check Call ID and retry.','error');
+    } else if(!tData.transcript){
+      await sb.from('quality_results').update({processing_status:'pending_transcript',ai_summary:'Transcript not ready yet — call may still be processing in Dialpad.'}).eq('id',qId);
+      showToast('⚠️ Transcript not ready yet — wait a few minutes and try again.','error');
     } else {
       const transcript=tData.transcript||'';
       await sb.from('quality_results').update({transcript,processing_status:'transcript_ready'}).eq('id',qId);
       showToast('✅ Transcript fetched! Quality scoring will run shortly.');
-      // Trigger scoring
       scoreQualityRecord(qId).catch(()=>{});
     }
   }catch(e){
-    await sb.from('quality_results').update({processing_status:'transcript_error',ai_summary:'Fetch error: '+e.message}).eq('id',qId);
-    showToast('⚠️ Fetch failed: '+e.message,'error');
+    await sb.from('quality_results').update({processing_status:'pending_transcript',ai_summary:'Fetch error: '+e.message+'. Please try again.'}).eq('id',qId);
+    showToast('⚠️ Fetch failed: '+e.message+'. Please try again.','error');
   }
   setTimeout(()=>renderQualityPage(),2000);
+}
+
+// ── Reset Call ID and transcript (if wrong call ID was entered) ───────────────
+async function qResetCallId(qId){
+  if(!confirm('⚠️ This will clear the Call ID, transcript, and score for this record so you can enter the correct Call ID. Continue?'))return;
+  showToast('⏳ Resetting record…');
+  const{error}=await sb.from('quality_results').update({
+    dialpad_call_id:null,
+    additional_call_ids:[],
+    transcript:null,
+    processing_status:'pending_transcript',
+    quality_status:'Pending',
+    score:null,
+    weighted_score:null,
+    ai_summary:'Reset by user — awaiting correct Call ID.',
+    scored_at:null,
+    quality_data:null
+  }).eq('id',qId);
+  if(error){showToast('❌ Reset failed: '+error.message,'error');return;}
+  showToast('✅ Record reset — please enter the correct Call ID.');
+  setTimeout(()=>renderQualityPage(),1500);
 }
 
 // ── Add extra Call ID from booking edit form ──────────────────────────────────
@@ -16813,6 +16838,22 @@ async function bkAddExtraCallId(){
   if(input)input.value='';
   showToast('✅ Call ID added — re-score will include all calls');
   // Update cached edit data and re-render form to show updated list
+  if(S._bkEditData) S._bkEditData.additional_call_ids=updated;
+  render();
+  if(_bkSelClient)setTimeout(()=>bkClientPick(_bkSelClient),100);
+}
+
+// ── Remove a single extra Call ID from booking edit form ──────────────────────
+async function bkRemoveExtraCallId(cidToRemove){
+  const bookingId=S._bkEditId;
+  if(!bookingId){showToast('⚠️ No booking selected','error');return;}
+  if(!confirm('Remove Call ID '+cidToRemove+'?'))return;
+  const{data:qRow,error:qErr}=await sb.from('quality_results').select('id,additional_call_ids').eq('lead_id',bookingId).maybeSingle();
+  if(qErr||!qRow){showToast('⚠️ Quality record not found','error');return;}
+  const updated=(qRow.additional_call_ids||[]).filter(c=>c!==cidToRemove);
+  const{error}=await sb.from('quality_results').update({additional_call_ids:updated}).eq('id',qRow.id);
+  if(error){showToast('❌ Error removing: '+error.message,'error');return;}
+  showToast('✅ Call ID removed');
   if(S._bkEditData) S._bkEditData.additional_call_ids=updated;
   render();
   if(_bkSelClient)setTimeout(()=>bkClientPick(_bkSelClient),100);
