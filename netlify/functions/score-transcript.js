@@ -1,5 +1,5 @@
 // Netlify Function: score-transcript.js
-// Scores call transcript using Claude AI with client-specific prompts
+// Scores call transcript using Google Gemini AI with client-specific prompts
 
 exports.handler = async (event, context) => {
   const headers = {
@@ -13,9 +13,9 @@ exports.handler = async (event, context) => {
     return { statusCode: 200, headers, body: '' };
   }
 
-  const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
-  if (!ANTHROPIC_API_KEY) {
-    return { statusCode: 500, headers, body: JSON.stringify({ error: 'Anthropic API key not configured' }) };
+  const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+  if (!GEMINI_API_KEY) {
+    return { statusCode: 500, headers, body: JSON.stringify({ error: 'Gemini API key not configured' }) };
   }
 
   try {
@@ -29,8 +29,6 @@ exports.handler = async (event, context) => {
       return { statusCode: 400, headers, body: JSON.stringify({ error: 'prompt_config required' }) };
     }
 
-    // Build the system prompt from admin-configured parameters
-    // prompt_config shape: { client, parameters: [{ name, weight, mandatory, scoring_rule, description }], overall_instructions }
     const { client, parameters = [], overall_instructions = '' } = prompt_config;
 
     let parameterInstructions = '';
@@ -45,7 +43,7 @@ exports.handler = async (event, context) => {
       parameterInstructions += `\nTotal weight: ${totalWeight}%`;
     }
 
-    const systemPrompt = `You are a quality evaluator for ${client || 'an education company'} demo scheduling calls.
+    const fullPrompt = `You are a quality evaluator for ${client || 'an education company'} demo scheduling calls.
 
 ${overall_instructions}${parameterInstructions}
 
@@ -53,7 +51,7 @@ CALL METADATA:
 - Agent: ${call_metadata?.agent_name || 'Unknown'}
 - Parent/Lead: ${call_metadata?.parent_name || 'Unknown'}
 - Region: ${call_metadata?.region || 'Unknown'}
-- Call Date: ${call_metadata?.call_date || 'Unknown'}
+- Call Date: ${call_metadata?.call_date || new Date().toLocaleDateString('en-IN')}
 
 You must evaluate the transcript and return a JSON response with this exact structure:
 {
@@ -82,42 +80,44 @@ Rules:
 - overall_status is VALID if weighted_score >= 70 and no mandatory failures
 - overall_status is MANUAL_REVIEW if weighted_score is 50-69 or there is ambiguity
 - Always provide evidence quotes from the actual transcript
-- Be objective and consistent`;
+- Be objective and consistent
+- Return ONLY valid JSON, no markdown, no explanation outside the JSON
 
-    const userMessage = `Please evaluate this call transcript:\n\n${transcript}`;
+TRANSCRIPT TO EVALUATE:
+${transcript}`;
 
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01'
-      },
-      body: JSON.stringify({
-        model: 'claude-3-5-sonnet-20241022',
-        max_tokens: 2000,
-        system: systemPrompt,
-        messages: [{ role: 'user', content: userMessage }]
-      })
-    });
+    const geminiRes = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: fullPrompt }] }],
+          generationConfig: {
+            temperature: 0.2,
+            maxOutputTokens: 2000,
+            responseMimeType: 'application/json'
+          }
+        })
+      }
+    );
 
-    const aiResponse = await response.json();
+    const geminiData = await geminiRes.json();
 
-    if (!response.ok) {
-      return { statusCode: response.status, headers, body: JSON.stringify({ error: aiResponse }) };
+    if (!geminiRes.ok) {
+      return {
+        statusCode: geminiRes.status,
+        headers,
+        body: JSON.stringify({ error: 'Gemini API error', details: geminiData })
+      };
     }
 
-    const content = aiResponse.content?.[0]?.text || '';
+    const content = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || '';
 
-    // Extract JSON from response
     let scored;
     try {
       const jsonMatch = content.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        scored = JSON.parse(jsonMatch[0]);
-      } else {
-        throw new Error('No JSON found in response');
-      }
+      scored = JSON.parse(jsonMatch ? jsonMatch[0] : content);
     } catch (parseErr) {
       return {
         statusCode: 200,
@@ -125,7 +125,7 @@ Rules:
         body: JSON.stringify({
           overall_status: 'MANUAL_REVIEW',
           error: 'Could not parse AI response',
-          raw_response: content
+          raw_response: content.slice(0, 500)
         })
       };
     }
