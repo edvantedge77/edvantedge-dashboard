@@ -93,11 +93,10 @@ ${transcript}`;
         'Authorization': `Bearer ${GROQ_API_KEY}`
       },
       body: JSON.stringify({
-        model: 'llama-3.1-70b-versatile',
+        model: 'openai/gpt-oss-120b',
         messages: [{ role: 'user', content: fullPrompt }],
         temperature: 0.2,
-        max_tokens: 2000,
-        response_format: { type: 'json_object' }
+        max_tokens: 2000
       })
     });
 
