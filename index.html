@@ -16826,7 +16826,9 @@ function renderQualityPage(){
               </td>
               <td style="padding:9px 12px;text-align:center">
                 ${r.processing_status==='pending_transcript'
-                  ?`<button onclick="qAddCallId('${r.id}')" style="font-size:11px;padding:3px 9px;border-radius:6px;border:1px solid #2471a3;background:#eaf4fb;color:#2471a3;cursor:pointer;font-weight:600">📞 Add Call ID</button>`
+                  ?(r.dialpad_call_id
+                    ?`<button onclick="showQualityDetail('${r.id}')" style="font-size:11px;padding:3px 9px;border-radius:6px;border:1px solid #27ae60;background:#e8f5e9;color:#1a7a40;cursor:pointer;font-weight:600">📞 ${1+(r.additional_call_ids||[]).length} Call ID(s) — Add More</button>`
+                    :`<button onclick="qAddCallId('${r.id}')" style="font-size:11px;padding:3px 9px;border-radius:6px;border:1px solid #2471a3;background:#eaf4fb;color:#2471a3;cursor:pointer;font-weight:600">📞 Add Call ID</button>`)
                   :r.processing_status==='transcript_error'
                   ?`<button onclick="qRetryTranscript('${r.id}','${h(r.dialpad_call_id||'')}')" style="font-size:11px;padding:3px 9px;border-radius:6px;border:1px solid #e74c3c;background:#fdecea;color:#c0392b;cursor:pointer;font-weight:600">🔄 Retry</button> <button onclick="qResetCallId('${r.id}')" title="Wrong Call ID? Reset and re-enter" style="font-size:10px;padding:2px 6px;border-radius:4px;border:1px solid #888;background:#f5f5f5;color:#555;cursor:pointer;margin-left:3px">↺ Reset</button>`
                   :r.processing_status==='fetching_transcript'
