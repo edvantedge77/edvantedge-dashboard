@@ -7539,21 +7539,25 @@ async function bkSaveBooking(){
     _bkLoaded=false;bkLoad();
 
     // ── QUALITY PIPELINE: trigger transcript fetch & scoring ──
-    // Only for new bookings (not edits), using the active lead + Call ID from form
+    // Only for new bookings (not edits), using the DEMO-BOOKING UUID (not crm_leads ID)
     if(!_wasEdit){
       const bkCallId=(document.getElementById('bkf_cid')?.value||'').trim();
-      const qLead={
-        id: S._bkActiveLead?.id || ('bk_'+Date.now()),
-        phone_code: phFull, phone: phFull,
-        parent_name: pn,
-        client_booked: cl,
-        agent_id: S._bkActiveLead?.agent_id || S.user?.id || null,
-        agent_name: S._bkActiveLead?.agent_name || S.user?.name || '',
-        Country: document.getElementById('bkf_co')?.value||'',
-        Zone: document.getElementById('bkf_zo')?.value||'',
-        dialpad_call_id: bkCallId||null,
-      };
-      triggerQualityCheck(qLead).catch(e=>console.warn('Quality check error:',e));
+      try{
+        // Query the newly-inserted (or overwritten) DEMO-BOOKING row to get its UUID
+        const{data:newBk}=await sb.from('DEMO-BOOKING').select('id').eq('phone_code',phFull).eq('client',cl).eq('parent_name',pn).order('created_at',{ascending:false}).limit(1).maybeSingle();
+        const qLead={
+          id: newBk?.id || S._bkActiveLead?.id || ('bk_'+Date.now()),
+          phone_code: phFull, phone: phFull,
+          parent_name: pn,
+          client_booked: cl,
+          agent_id: S._bkActiveLead?.agent_id || S.user?.id || null,
+          agent_name: S._bkActiveLead?.agent_name || S.user?.name || '',
+          Country: document.getElementById('bkf_co')?.value||'',
+          Zone: document.getElementById('bkf_zo')?.value||'',
+          dialpad_call_id: bkCallId||null,
+        };
+        await triggerQualityCheck(qLead);
+      }catch(qe){console.warn('Quality check error:',qe);}
     }
   }catch(e){bkToast('Error: '+(e.message||'Unknown error'),'error');console.error('bkSave:',e);}
 }
@@ -16481,6 +16485,18 @@ async function triggerQualityCheck(lead){
   const parentName=lead.parent_name||'';
   const dialpadCallId=(lead.dialpad_call_id||'').trim()||null;
 
+  // Duplicate guard: check for existing QR with same lead_id before inserting
+  // This prevents double-records if triggerQualityCheck fires more than once for the same booking
+  const {data:existingQR}=await sb.from('quality_results').select('id').eq('lead_id',lead.id).maybeSingle();
+  if(existingQR){
+    // QR already exists for this booking — update dialpad_call_id if we now have one
+    if(dialpadCallId){
+      await sb.from('quality_results').update({dialpad_call_id:dialpadCallId,processing_status:'fetching_transcript'}).eq('id',existingQR.id).catch(()=>{});
+    }
+    console.info('triggerQualityCheck: QR already exists for lead_id',lead.id,'— skipping insert');
+    return;
+  }
+
   // Insert pending record immediately
   const insertRow={
     lead_id:lead.id, phone, parent_name:parentName, client, region,
@@ -16666,8 +16682,8 @@ function _qRestoreFilters(){
   });
 }
 function renderQualityPage(){
-  // Capture current filter state before re-rendering
-  _qSaveFilters();
+  // NOTE: _qSaveFilters() must NOT be called here — the DOM elements don't exist yet.
+  // It is called after innerHTML is set, just before _qRestoreFilters().
   setTimeout(async()=>{
     const el=document.getElementById('quality-content');
     if(!el) return;
@@ -16836,6 +16852,8 @@ function renderQualityPage(){
     const _qMe=_qNow.toISOString().slice(0,10);
     const _qDf=document.getElementById('q-filter-date-from');if(_qDf&&!_qDf.value)_qDf.value=_qMs;
     const _qDt=document.getElementById('q-filter-date-to');if(_qDt&&!_qDt.value)_qDt.value=_qMe;
+    // Save current filter values (DOM now exists) then restore them after rebuild
+    _qSaveFilters();
     // Restore any filters the admin had applied before this re-render
     _qRestoreFilters();
     // Re-apply filters so visibility matches restored state
@@ -16912,9 +16930,20 @@ async function bkAddExtraCallId(){
   if(newId.length!==16){showToast('⚠️ Call ID must be exactly 16 digits','error');return;}
   const bookingId=S._bkEditId;
   if(!bookingId){showToast('⚠️ No booking selected','error');return;}
-  // Find quality_results row for this booking
-  const{data:qRow,error:qErr}=await sb.from('quality_results').select('id,additional_call_ids,dialpad_call_id').eq('lead_id',bookingId).maybeSingle();
-  if(qErr||!qRow){showToast('⚠️ Quality record not found for this booking','error');return;}
+  // Find quality_results row for this booking — try UUID first, then phone fallback
+  let qRow=null;
+  const{data:qById,error:qErr}=await sb.from('quality_results').select('id,additional_call_ids,dialpad_call_id').eq('lead_id',bookingId).maybeSingle();
+  if(!qErr&&qById){ qRow=qById; }
+  else {
+    // Fallback: match by phone (handles legacy crm_leads-ID records)
+    const bkForPhone=(S.bookingLeads||[]).find(b=>b.id===bookingId);
+    const ph=(bkForPhone?.phone_code||'').replace(/\D/g,'');
+    if(ph){
+      const{data:qByPhone}=await sb.from('quality_results').select('id,additional_call_ids,dialpad_call_id').ilike('phone','%'+ph+'%').order('disposed_at',{ascending:false}).limit(1).maybeSingle();
+      if(qByPhone) qRow=qByPhone;
+    }
+  }
+  if(!qRow){showToast('⚠️ Quality record not found for this booking','error');return;}
   const existing=qRow.additional_call_ids||[];
   if(existing.includes(newId)||newId===qRow.dialpad_call_id){showToast('⚠️ This Call ID is already added','warning');return;}
   const updated=[...existing,newId];
@@ -16933,8 +16962,19 @@ async function bkRemoveExtraCallId(cidToRemove){
   const bookingId=S._bkEditId;
   if(!bookingId){showToast('⚠️ No booking selected','error');return;}
   if(!confirm('Remove Call ID '+cidToRemove+'?'))return;
-  const{data:qRow,error:qErr}=await sb.from('quality_results').select('id,additional_call_ids').eq('lead_id',bookingId).maybeSingle();
-  if(qErr||!qRow){showToast('⚠️ Quality record not found','error');return;}
+  // Find quality_results row — try UUID first, then phone fallback
+  let qRow=null;
+  const{data:qById2,error:qErr2}=await sb.from('quality_results').select('id,additional_call_ids').eq('lead_id',bookingId).maybeSingle();
+  if(!qErr2&&qById2){ qRow=qById2; }
+  else {
+    const bkForPhone2=(S.bookingLeads||[]).find(b=>b.id===bookingId);
+    const ph2=(bkForPhone2?.phone_code||'').replace(/\D/g,'');
+    if(ph2){
+      const{data:qByPhone2}=await sb.from('quality_results').select('id,additional_call_ids').ilike('phone','%'+ph2+'%').order('disposed_at',{ascending:false}).limit(1).maybeSingle();
+      if(qByPhone2) qRow=qByPhone2;
+    }
+  }
+  if(!qRow){showToast('⚠️ Quality record not found','error');return;}
   const updated=(qRow.additional_call_ids||[]).filter(c=>c!==cidToRemove);
   const{error}=await sb.from('quality_results').update({additional_call_ids:updated}).eq('id',qRow.id);
   if(error){showToast('❌ Error removing: '+error.message,'error');return;}
