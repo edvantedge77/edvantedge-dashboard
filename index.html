@@ -16682,8 +16682,9 @@ function _qRestoreFilters(){
   });
 }
 function renderQualityPage(){
-  // NOTE: _qSaveFilters() must NOT be called here — the DOM elements don't exist yet.
-  // It is called after innerHTML is set, just before _qRestoreFilters().
+  // Save current filter values NOW (old DOM still exists from previous render).
+  // Must happen synchronously before setTimeout overwrites innerHTML.
+  _qSaveFilters();
   setTimeout(async()=>{
     const el=document.getElementById('quality-content');
     if(!el) return;
@@ -16852,9 +16853,8 @@ function renderQualityPage(){
     const _qMe=_qNow.toISOString().slice(0,10);
     const _qDf=document.getElementById('q-filter-date-from');if(_qDf&&!_qDf.value)_qDf.value=_qMs;
     const _qDt=document.getElementById('q-filter-date-to');if(_qDt&&!_qDt.value)_qDt.value=_qMe;
-    // Save current filter values (DOM now exists) then restore them after rebuild
-    _qSaveFilters();
     // Restore any filters the admin had applied before this re-render
+    // (state was saved synchronously at the top of renderQualityPage before DOM was wiped)
     _qRestoreFilters();
     // Re-apply filters so visibility matches restored state
     qFilterRows();
