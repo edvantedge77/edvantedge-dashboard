@@ -5471,8 +5471,18 @@ async function bkStandaloneEdit(id){
   // already handled when it was first created, so don't re-prompt for it,
   // just restore the highlighted client card as before.
   _bkFormConfirmed=new Set(bk.client?[bk.client]:[]);
-  // Fetch additional_call_ids from quality_results for this booking
-  const{data:qr}=await sb.from('quality_results').select('additional_call_ids').eq('lead_id',id).maybeSingle();
+  // Fetch additional_call_ids from quality_results for this booking.
+  // First try matching by DEMO-BOOKING UUID (lead_id); if no result, fall back
+  // to phone match since older quality records may store the crm_leads ID instead.
+  let qr=null;
+  const{data:qrById}=await sb.from('quality_results').select('id,additional_call_ids').eq('lead_id',id).maybeSingle();
+  if(qrById){
+    qr=qrById;
+  } else if(bk.phone_code){
+    const ph=(bk.phone_code||'').replace(/\D/g,'');
+    const{data:qrByPhone}=await sb.from('quality_results').select('id,additional_call_ids').ilike('phone','%'+ph+'%').order('disposed_at',{ascending:false}).limit(1).maybeSingle();
+    if(qrByPhone) qr=qrByPhone;
+  }
   const bkWithExtras={...bk,additional_call_ids:(qr?.additional_call_ids||[])};
   S._bkActiveLead=null;S._bkEditId=id;S._bkEditData=bkWithExtras;
   S.modal={type:'bkStandalone'};
@@ -5862,6 +5872,26 @@ async function bkStandaloneSave(){
       }
       // Auto-increment performance (non-fatal)
       try{const today=new Date().toISOString().slice(0,10);autoIncrementPerf((S.user.name||'').toUpperCase(),_bkSelClient,'Demo Scheduled',today);}catch(pe){console.warn('perf increment skipped:',pe);}
+      // Trigger quality record creation for new standalone bookings (non-fatal)
+      // We need the DEMO-BOOKING UUID as the lead_id so the booking edit can
+      // fetch additional_call_ids later. Fetch the newly inserted row's id.
+      try{
+        const{data:newBk}=await sb.from('DEMO-BOOKING').select('id').eq('phone_code',pc).eq('client',_bkSelClient).eq('parent_name',pn).order('created_at',{ascending:false}).limit(1).maybeSingle();
+        if(newBk?.id){
+          const qLead={
+            id: newBk.id,
+            phone_code: pc,
+            parent_name: pn,
+            client_booked: _bkSelClient,
+            Country: document.getElementById('bksf_co')?.value||'',
+            Zone: document.getElementById('bksf_zo')?.value||'',
+            agent_id: _resolvedAgentId,
+            agent_name: _agNameSel,
+            dialpad_call_id: callidVal||null,
+          };
+          await triggerQualityCheck(qLead);
+        }
+      }catch(qe){console.warn('triggerQualityCheck skipped:',qe);}
     }
     _bkLoaded=false;
     bkStandaloneClose();
@@ -16623,7 +16653,21 @@ async function scoreQualityRecord(qId){
 // ═══════════════════════════════════════════════════════════════════════════
 // QUALITY PAGE — Agent & Admin view with per-parameter breakdown
 // ═══════════════════════════════════════════════════════════════════════════
+// Persisted quality filter state — survives re-renders triggered by actions
+window._qFilterState = window._qFilterState || {};
+function _qSaveFilters(){
+  const ids=['q-filter-agent','q-filter-phone','q-filter-parent','q-filter-client','q-filter-country','q-filter-status','q-filter-date-from','q-filter-date-to'];
+  ids.forEach(id=>{const el=document.getElementById(id);if(el)window._qFilterState[id]=el.value;});
+}
+function _qRestoreFilters(){
+  Object.entries(window._qFilterState||{}).forEach(([id,val])=>{
+    if(val===undefined||val===null) return;
+    const el=document.getElementById(id);if(el&&el.value!==val)el.value=val;
+  });
+}
 function renderQualityPage(){
+  // Capture current filter state before re-rendering
+  _qSaveFilters();
   setTimeout(async()=>{
     const el=document.getElementById('quality-content');
     if(!el) return;
@@ -16706,9 +16750,32 @@ function renderQualityPage(){
             const summary=r.ai_summary?r.ai_summary.slice(0,80)+(r.ai_summary.length>80?'…':''):'—';
             const _qs=(r.quality_status||'').toLowerCase().trim();const _ps=(r.processing_status||'').toLowerCase().trim();const hasDetail=((_ps==='complete')||r.parameters_detail||(r.ai_summary&&r.ai_summary!=='Awaiting Call ID'&&!r.ai_summary.startsWith('Reset by')))&&_ps!=='pending_transcript'&&_qs!=='pending';
             const rowDate=r.disposed_at?r.disposed_at.slice(0,10):'';
-            return`<tr class="q-row" data-status="${r.quality_status||''}" data-agent="${(r.agent_name||'').toLowerCase()}" data-parent="${(r.parent_name||'').toLowerCase()}" data-date="${rowDate}" data-phone="${(r.phone||r.phone_number||'').toLowerCase()}" data-client="${(r.client||'').toLowerCase()}" data-country="${(r.region||r.country||'').toLowerCase()}" style="border-bottom:1px solid var(--border)">
+            // Normalize phone for display and search: ensure leading + and correct country code
+            const _rawPhone=(r.phone||r.phone_number||'').trim();
+            const _normPhone=(()=>{
+              const digits=_rawPhone.replace(/\D/g,'');
+              if(!digits) return _rawPhone;
+              // Detect country from region field
+              const reg=(r.region||r.country||'').toLowerCase();
+              // Already has + prefix stored
+              if(_rawPhone.startsWith('+')) {
+                // Remove duplicate country code e.g. +611614... → +61614...
+                if(_rawPhone.startsWith('+1') && digits.length===12 && digits.startsWith('11')) return '+1'+digits.slice(2);
+                if(_rawPhone.startsWith('+61') && digits.length===13 && digits.startsWith('6161')) return '+61'+digits.slice(4);
+                if(_rawPhone.startsWith('+44') && digits.length===14 && digits.startsWith('4444')) return '+44'+digits.slice(4);
+                return _rawPhone;
+              }
+              // No + prefix — prepend based on region
+              if(reg.includes('aus')||reg.includes('australia')) return '+61'+digits.replace(/^61/,'');
+              if(reg.includes('uk')||reg.includes('united kingdom')||reg.includes('britain')) return '+44'+digits.replace(/^44/,'');
+              if(reg.includes('us')||reg.includes('usa')||reg.includes('united states')||reg.includes('canada')) return '+1'+digits.replace(/^1/,'');
+              if(reg.includes('india')) return digits.startsWith('91')?'+'+digits:'+91'+digits;
+              // Can't determine — add + if looks like it has country code (>10 digits)
+              return digits.length>10?'+'+digits:_rawPhone;
+            })();
+            return`<tr class="q-row" data-status="${r.quality_status||''}" data-agent="${(r.agent_name||'').toLowerCase()}" data-parent="${(r.parent_name||'').toLowerCase()}" data-date="${rowDate}" data-phone="${_normPhone.toLowerCase()} ${_rawPhone.replace(/\D/g,'').toLowerCase()}" data-client="${(r.client||'').toLowerCase()}" data-country="${(r.region||r.country||'').toLowerCase()}" style="border-bottom:1px solid var(--border)">
               ${isAdm?`<td style="padding:9px 12px;font-size:12px">${h(r.agent_name||'—')}</td>`:''}
-              <td style="padding:9px 12px;font-size:12px;font-family:monospace">${h(r.phone||'—')}</td>
+              <td style="padding:9px 12px;font-size:12px;font-family:monospace">${h(_normPhone||'—')}</td>
               <td style="padding:9px 12px;font-size:12px">${h(r.parent_name||'—')}</td>
               <td style="padding:9px 12px;font-size:12px">${h(r.client||'—')}</td>
               <td style="padding:9px 12px;text-align:center">
@@ -16769,6 +16836,10 @@ function renderQualityPage(){
     const _qMe=_qNow.toISOString().slice(0,10);
     const _qDf=document.getElementById('q-filter-date-from');if(_qDf&&!_qDf.value)_qDf.value=_qMs;
     const _qDt=document.getElementById('q-filter-date-to');if(_qDt&&!_qDt.value)_qDt.value=_qMe;
+    // Restore any filters the admin had applied before this re-render
+    _qRestoreFilters();
+    // Re-apply filters so visibility matches restored state
+    qFilterRows();
 
     // Auto-trigger scoring for any transcript_ready records
     const readyToScore=(rows||[]).filter(r=>r.processing_status==='transcript_ready'&&r.transcript);
@@ -16941,6 +17012,8 @@ function qFilterRows(){
   });
 }
 function qClearFilters(){
+  // Clear persisted filter state so next re-render doesn't re-apply old values
+  window._qFilterState={};
   ['q-filter-agent','q-filter-phone','q-filter-parent','q-filter-client','q-filter-country','q-filter-status'].forEach(id=>{
     const el=document.getElementById(id); if(el) el.value='';
   });
