@@ -1358,8 +1358,8 @@ async function loadLeads(reset){
   if(f.child_name)  q=q.ilike('child_name',`%${f.child_name}%`);
   if(f.phone_code)  q=q.or(`phone_code.ilike.%${f.phone_code}%,phone.ilike.%${f.phone_code}%`);
   if(f.email)       q=q.ilike('email',`%${f.email}%`);
-  // Legacy search
-  if(f.search)q=q.or(`parent_name.ilike.%${f.search}%,child_name.ilike.%${f.search}%`);
+  // Legacy search — also covers phone so users can search by number in main box
+  if(f.search)q=q.or(`parent_name.ilike.%${f.search}%,child_name.ilike.%${f.search}%,phone_code.ilike.%${f.search}%,phone.ilike.%${f.search}%`);
   if(f.phone)q=q.or(`phone.ilike.%${f.phone}%,phone_code.ilike.%${f.phone}%`);
   if(f.altphone)q=q.ilike('alt_phone',`%${f.altphone}%`);
   // Dropdown filters
@@ -3534,8 +3534,8 @@ async function saveDispo(leadId, moveNext=true){
     if(disp === 'Demo Scheduled'){
       autoCreateBooking(confirmed, disp);
       loadAgentBookingLeads().catch(()=>{});
-      // ── QUALITY PIPELINE: trigger transcript fetch & scoring ──
-      triggerQualityCheck(confirmed).catch(e=>console.warn('Quality check error:',e));
+      // NOTE: Quality record is created in bkSaveBooking/bkStandaloneSave (after booking form is saved)
+      // using the DEMO-BOOKING UUID. Do NOT trigger here — no UUID exists yet at this point.
     }
 
     // 10. List movement: remove from current working set if lead no longer belongs
@@ -4114,7 +4114,7 @@ function renderAssign(){
     <div class="card-title" style="margin-bottom:12px">Filter unassigned leads</div>
     <div class="fbar">
       <div class="fg">${lbl('Search name')}
-        <input placeholder="Parent / child name…" oninput="setF('search',this.value)" value="${h(f.search||'')}"/></div>
+        <input placeholder="Name / phone…" oninput="setF('search',this.value)" value="${h(f.search||'')}"/></div>
       <div class="fg">${lbl('Dataset')}
         <select onchange="setF('dataset',this.value)">
           <option value="">All datasets</option>
@@ -5065,8 +5065,8 @@ async function saveNewLead(bypassDuplicate){
 
   // Navigate to bookings if DS/DD, else back to All Leads
   if(disp==='Demo Scheduled'){
-    // ── QUALITY PIPELINE: trigger transcript fetch & scoring ──
-    triggerQualityCheck(lead).catch(e=>console.warn('Quality check error:',e));
+    // NOTE: Quality record is created in bkSaveBooking/bkStandaloneSave using DEMO-BOOKING UUID.
+    // Do NOT trigger here — no UUID exists yet at this point.
     await loadAgentBookingLeads().catch(()=>{});
     goPage('bookings');
   } else {
@@ -5666,15 +5666,14 @@ function renderBkStandaloneModal(){
     +'<textarea id="bksf_no" rows="3" style="width:100%;padding:9px 11px;border:1.5px solid #e2e6ed;border-radius:7px;font-size:13px;box-sizing:border-box;resize:vertical">'+(isEdit?(ed.notes||''):(lead?.comments||''))+'</textarea></div>'
     +'<div style="margin-bottom:16px"><label style="font-size:10px;font-weight:700;color:#8a9ab0;text-transform:uppercase;display:block;margin-bottom:4px">Dialpad Call ID (Primary)</label>'
     +'<input id="bksf_callid" type="text" inputmode="numeric" maxlength="16" placeholder="16-digit Dialpad Call ID" value="'+(isEdit?(ed.dialpad_call_id||''):'').replace(/"/g,'&quot;')+'" oninput="this.value=this.value.replace(/\\D/g,\'\').slice(0,16)" style="width:100%;padding:9px 11px;border:1.5px solid #e2e6ed;border-radius:7px;font-size:13px;box-sizing:border-box;letter-spacing:1px;font-family:monospace"></div>'
-    +(isEdit?'<div style="margin-bottom:16px;background:#f0f7ff;border:1px solid #c8e0f7;border-radius:8px;padding:12px">'
+    +'<div style="margin-bottom:16px;background:#f0f7ff;border:1px solid #c8e0f7;border-radius:8px;padding:12px">'
       +'<label style="font-size:10px;font-weight:700;color:#2471a3;text-transform:uppercase;display:block;margin-bottom:8px">📞 Additional Call IDs (if call dropped &amp; reconnected)</label>'
-      +(ed.additional_call_ids&&ed.additional_call_ids.length>0
+      +(isEdit&&ed.additional_call_ids&&ed.additional_call_ids.length>0
         ?ed.additional_call_ids.map((cid,i)=>'<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px"><span style="background:#e8f5e9;padding:3px 8px;border-radius:4px;font-family:monospace;font-size:12px">'+cid+'</span><span style="color:#888;font-size:11px">Call '+(i+2)+'</span><button type="button" onclick="bkRemoveExtraCallId(\''+cid+'\')" title="Remove this Call ID" style="margin-left:auto;padding:2px 7px;border-radius:4px;border:1px solid #e74c3c;background:#fdecea;color:#c0392b;font-size:11px;cursor:pointer;font-weight:700">✕ Remove</button></div>').join('')
         :'<div style="color:#888;font-size:11px;margin-bottom:8px">No additional call IDs yet</div>')
       +'<div style="display:flex;gap:6px;margin-top:4px"><input id="bksf_extra_callid" type="text" inputmode="numeric" maxlength="16" placeholder="Paste extra Call ID..." oninput="this.value=this.value.replace(/\\D/g,\'\').slice(0,16)" style="flex:1;padding:7px 10px;border:1.5px solid #c8e0f7;border-radius:6px;font-size:12px;font-family:monospace">'
       +'<button type="button" onclick="bkAddExtraCallId()" style="padding:7px 12px;background:#2471a3;color:#fff;border:none;border-radius:6px;font-size:12px;font-weight:700;cursor:pointer">➕ Add</button></div>'
       +'</div>'
-    :'')
 
     +'<div id="bksf_err" style="color:#e74c3c;font-size:12px;margin-bottom:10px;display:none"></div>'
     +'</div>'
@@ -16772,21 +16771,26 @@ function renderQualityPage(){
             const _normPhone=(()=>{
               const digits=_rawPhone.replace(/\D/g,'');
               if(!digits) return _rawPhone;
-              // Detect country from region field
+              // Detect country from region field first, then fall back to phone prefix
               const reg=(r.region||r.country||'').toLowerCase();
-              // Already has + prefix stored
+              // Already has + prefix stored — just de-duplicate if needed
               if(_rawPhone.startsWith('+')) {
-                // Remove duplicate country code e.g. +611614... → +61614...
-                if(_rawPhone.startsWith('+1') && digits.length===12 && digits.startsWith('11')) return '+1'+digits.slice(2);
-                if(_rawPhone.startsWith('+61') && digits.length===13 && digits.startsWith('6161')) return '+61'+digits.slice(4);
-                if(_rawPhone.startsWith('+44') && digits.length===14 && digits.startsWith('4444')) return '+44'+digits.slice(4);
-                return _rawPhone;
+                // Remove duplicate country code e.g. +6161XXXXXXXX → +61XXXXXXXX
+                if(digits.startsWith('6161')) return '+61'+digits.slice(4);
+                if(digits.startsWith('4444')) return '+44'+digits.slice(4);
+                if(digits.startsWith('11') && digits.length===12) return '+1'+digits.slice(2);
+                return _rawPhone; // already valid
               }
-              // No + prefix — prepend based on region
+              // No + prefix — try region label first
               if(reg.includes('aus')||reg.includes('australia')) return '+61'+digits.replace(/^61/,'');
               if(reg.includes('uk')||reg.includes('united kingdom')||reg.includes('britain')) return '+44'+digits.replace(/^44/,'');
               if(reg.includes('us')||reg.includes('usa')||reg.includes('united states')||reg.includes('canada')) return '+1'+digits.replace(/^1/,'');
               if(reg.includes('india')) return digits.startsWith('91')?'+'+digits:'+91'+digits;
+              // No region — infer from leading digits (phone stored without + but with country code)
+              if(digits.startsWith('61') && digits.length>=10) return '+'+digits;  // AU
+              if(digits.startsWith('44') && digits.length>=11) return '+'+digits;  // UK
+              if(digits.startsWith('1') && digits.length===11) return '+'+digits;  // US/CA
+              if(digits.startsWith('91') && digits.length===12) return '+'+digits; // India
               // Can't determine — add + if looks like it has country code (>10 digits)
               return digits.length>10?'+'+digits:_rawPhone;
             })();
@@ -16826,7 +16830,7 @@ function renderQualityPage(){
                   :r.processing_status==='transcript_error'
                   ?`<button onclick="qRetryTranscript('${r.id}','${h(r.dialpad_call_id||'')}')" style="font-size:11px;padding:3px 9px;border-radius:6px;border:1px solid #e74c3c;background:#fdecea;color:#c0392b;cursor:pointer;font-weight:600">🔄 Retry</button> <button onclick="qResetCallId('${r.id}')" title="Wrong Call ID? Reset and re-enter" style="font-size:10px;padding:2px 6px;border-radius:4px;border:1px solid #888;background:#f5f5f5;color:#555;cursor:pointer;margin-left:3px">↺ Reset</button>`
                   :r.processing_status==='fetching_transcript'
-                  ?'<span style="font-size:11px;color:#f39c12">⏳ Fetching…</span>'
+                  ?`<span style="font-size:11px;color:#f39c12">⏳ Fetching…</span> <button onclick="qResetCallId('${r.id}')" title="Wrong Call ID? Reset and re-enter" style="font-size:10px;padding:2px 6px;border-radius:4px;border:1px solid #888;background:#f5f5f5;color:#555;cursor:pointer;margin-left:3px">↺ Reset</button>`
                   :r.transcript
                   ?`<span style="font-size:11px;color:#27ae60">✅ Done</span> <button onclick="qAddCallId('${r.id}')" title="Add another call ID" style="font-size:10px;padding:2px 6px;border-radius:4px;border:1px solid #27ae60;background:#e8f5e9;color:#27ae60;cursor:pointer;margin-left:3px">➕</button> <button onclick="qResetCallId('${r.id}')" title="Reset — clear Call ID and transcript if wrong" style="font-size:10px;padding:2px 6px;border-radius:4px;border:1px solid #e74c3c;background:#fdecea;color:#c0392b;cursor:pointer;margin-left:2px">🔄 Reset</button>`
                   :'<span style="color:var(--text3);font-size:11px">—</span>'}
