@@ -5875,7 +5875,9 @@ async function bkStandaloneSave(){
       // We need the DEMO-BOOKING UUID as the lead_id so the booking edit can
       // fetch additional_call_ids later. Fetch the newly inserted row's id.
       try{
-        const{data:newBk}=await sb.from('DEMO-BOOKING').select('id').eq('phone_code',pc).eq('client',_bkSelClient).eq('parent_name',pn).order('created_at',{ascending:false}).limit(1).maybeSingle();
+        console.log('[Quality] Firing quality trigger — pc:',pc,'client:',_bkSelClient,'pn:',pn);
+        const{data:newBk,error:bkErr}=await sb.from('DEMO-BOOKING').select('id').eq('phone_code',pc).eq('client',_bkSelClient).eq('parent_name',pn).order('created_at',{ascending:false}).limit(1).maybeSingle();
+        console.log('[Quality] newBk lookup result:',newBk,'error:',bkErr);
         if(newBk?.id){
           const qLead={
             id: newBk.id,
@@ -5889,8 +5891,15 @@ async function bkStandaloneSave(){
             dialpad_call_id: callidVal||null,
           };
           await triggerQualityCheck(qLead);
+        } else {
+          const errMsg='Quality record NOT created — booking lookup failed'+(bkErr?' ('+bkErr.message+')':' (no match for phone/client/name)');
+          console.error('[Quality]',errMsg,'| pc:',pc,'| client:',_bkSelClient,'| pn:',pn);
+          showToast('⚠️ '+errMsg,'error');
         }
-      }catch(qe){console.warn('triggerQualityCheck skipped:',qe);}
+      }catch(qe){
+        console.error('[Quality] triggerQualityCheck exception:',qe);
+        showToast('⚠️ Quality trigger error: '+(qe.message||String(qe)),'error');
+      }
     }
     _bkLoaded=false;
     bkStandaloneClose();
