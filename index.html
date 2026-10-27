@@ -5855,7 +5855,8 @@ async function bkStandaloneSave(){
       }
     }else{
       rec.created_at=new Date().toISOString();
-      const{error}=await sb.from('DEMO-BOOKING').insert(rec);
+      // Use .select('id').single() to get the UUID back directly — no secondary lookup needed
+      const{data:insertedBk,error}=await sb.from('DEMO-BOOKING').insert(rec).select('id').single();
       if(error)throw error;
       showToast('Booking saved — '+_bkSelClient+' · '+pn);
       pushToTuritoIfNeeded(rec, pc);
@@ -5871,16 +5872,11 @@ async function bkStandaloneSave(){
       }
       // Auto-increment performance (non-fatal)
       try{const today=new Date().toISOString().slice(0,10);autoIncrementPerf((S.user.name||'').toUpperCase(),_bkSelClient,'Demo Scheduled',today);}catch(pe){console.warn('perf increment skipped:',pe);}
-      // Trigger quality record creation for new standalone bookings (non-fatal)
-      // We need the DEMO-BOOKING UUID as the lead_id so the booking edit can
-      // fetch additional_call_ids later. Fetch the newly inserted row's id.
+      // Trigger quality record — use UUID returned directly from insert (no secondary lookup)
       try{
-        console.log('[Quality] Firing quality trigger — pc:',pc,'client:',_bkSelClient,'pn:',pn);
-        const{data:newBk,error:bkErr}=await sb.from('DEMO-BOOKING').select('id').eq('phone_code',pc).eq('client',_bkSelClient).eq('parent_name',pn).order('created_at',{ascending:false}).limit(1).maybeSingle();
-        console.log('[Quality] newBk lookup result:',newBk,'error:',bkErr);
-        if(newBk?.id){
+        if(insertedBk?.id){
           const qLead={
-            id: newBk.id,
+            id: insertedBk.id,
             phone_code: pc,
             parent_name: pn,
             client_booked: _bkSelClient,
@@ -5892,9 +5888,8 @@ async function bkStandaloneSave(){
           };
           await triggerQualityCheck(qLead);
         } else {
-          const errMsg='Quality record NOT created — booking lookup failed'+(bkErr?' ('+bkErr.message+')':' (no match for phone/client/name)');
-          console.error('[Quality]',errMsg,'| pc:',pc,'| client:',_bkSelClient,'| pn:',pn);
-          showToast('⚠️ '+errMsg,'error');
+          console.error('[Quality] No id returned from DEMO-BOOKING insert');
+          showToast('⚠️ Booking saved but quality record not created — no UUID returned','error');
         }
       }catch(qe){
         console.error('[Quality] triggerQualityCheck exception:',qe);
@@ -13926,10 +13921,15 @@ async function loadTodayDemoSchedule(){
       return;
     }
 
+    // Exclude Codyoung (DS-only) from D-Day schedule entirely
+    var _cySet=new Set(['codyoung','codeyoung','smartowl','smart owl']);
+    var _iscy=function(b){return _cySet.has((b.client||'').toLowerCase().trim());};
+    var ddayData=data.filter(function(b){return !_iscy(b);});
+
     // Group by IST hour slot; records with no demo_time_ist go into 'TBD' bucket
     // Store full record arrays so clicking a row shows lead details
     var slotMap={},tbdRecords=[];
-    data.forEach(function(b){
+    ddayData.forEach(function(b){
       if(!b.demo_time_ist||b.demo_time_ist.trim()===''){
         tbdRecords.push(b);
         return;
@@ -13950,10 +13950,8 @@ async function loadTodayDemoSchedule(){
       var bv=bh+bm/60+(bh<8?24:0);
       return av-bv;
     });
-    var _cySet=new Set(['codyoung','codeyoung','smartowl','smart owl']);
-    var _iscy=function(b){return _cySet.has((b.client||'').toLowerCase().trim());};
-    var totDday=data.filter(function(b){return !_iscy(b);}).length;
-    var totDone=data.filter(function(b){return b.status==='Demo Done'&&!_iscy(b);}).length;
+    var totDday=ddayData.length;
+    var totDone=ddayData.filter(function(b){return b.status==='Demo Done';}).length;
     var totConv=totDday?Math.round(totDone/totDday*100):0;
 
     // Store slot data globally so click handlers can access it
