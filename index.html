@@ -6102,7 +6102,8 @@ function renderAgentBookingsView(){
     return true;
   });
   const SC={};ST.forEach(s=>{SC[s]=_periodFiltered.filter(b=>b.status===s).length;});
-  const todayDemos=bks.filter(b=>b.demo_date===todayStr).length;
+  const _isCY=b=>{const c=(b.client||'').toLowerCase().trim();return c==='codyoung'||c==='codeyoung'||c==='smartowl'||c==='smart owl';};
+  const todayDemos=bks.filter(b=>b.demo_date===todayStr&&!_isCY(b)).length;
 
   // Client counts
   const clientCounts={};Object.keys(CC).forEach(c=>{clientCounts[c]=bks.filter(b=>getClient(b)===c).length;});
@@ -6148,7 +6149,7 @@ function renderAgentBookingsView(){
   const pillTotal=pillSrc.length;
   // Count from ALL bookings (bks), not period-filtered pillSrc — so "Today's Demos"
   // always shows the absolute count of demos happening today regardless of active period
-  const pillToday=bks.filter(b=>b.demo_date===todayStr).length;
+  const pillToday=bks.filter(b=>b.demo_date===todayStr&&!_isCY(b)).length;
 
   // Period tabs
   const now2=new Date();const dow=now2.getDay();const wsMon=new Date(now2);wsMon.setDate(now2.getDate()-(dow===0?6:dow-1));const wsStr=bkFD(wsMon.toISOString().slice(0,10).split('-').reverse().join('-')).split('-').reverse().join('-');
@@ -13949,8 +13950,10 @@ async function loadTodayDemoSchedule(){
       var bv=bh+bm/60+(bh<8?24:0);
       return av-bv;
     });
-    var totDday=data.length;
-    var totDone=data.filter(function(b){return b.status==='Demo Done';}).length;
+    var _cySet=new Set(['codyoung','codeyoung','smartowl','smart owl']);
+    var _iscy=function(b){return _cySet.has((b.client||'').toLowerCase().trim());};
+    var totDday=data.filter(function(b){return !_iscy(b);}).length;
+    var totDone=data.filter(function(b){return b.status==='Demo Done'&&!_iscy(b);}).length;
     var totConv=totDday?Math.round(totDone/totDday*100):0;
 
     // Store slot data globally so click handlers can access it
