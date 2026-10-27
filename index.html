@@ -5664,8 +5664,8 @@ function renderBkStandaloneModal(){
     +'</div>'
     +'<div style="margin-bottom:16px"><label style="font-size:10px;font-weight:700;color:#8a9ab0;text-transform:uppercase;display:block;margin-bottom:4px">Notes</label>'
     +'<textarea id="bksf_no" rows="3" style="width:100%;padding:9px 11px;border:1.5px solid #e2e6ed;border-radius:7px;font-size:13px;box-sizing:border-box;resize:vertical">'+(isEdit?(ed.notes||''):(lead?.comments||''))+'</textarea></div>'
-    +'<div style="margin-bottom:16px"><label style="font-size:10px;font-weight:700;color:#8a9ab0;text-transform:uppercase;display:block;margin-bottom:4px">Dialpad Call ID (Primary)</label>'
-    +'<input id="bksf_callid" type="text" inputmode="numeric" maxlength="16" placeholder="16-digit Dialpad Call ID" value="'+(isEdit?(ed.dialpad_call_id||''):'').replace(/"/g,'&quot;')+'" oninput="this.value=this.value.replace(/\\D/g,\'\').slice(0,16)" style="width:100%;padding:9px 11px;border:1.5px solid #e2e6ed;border-radius:7px;font-size:13px;box-sizing:border-box;letter-spacing:1px;font-family:monospace"></div>'
+    +'<div style="margin-bottom:16px"><label style="font-size:10px;font-weight:700;color:#8a9ab0;text-transform:uppercase;display:block;margin-bottom:4px">Dialpad Call ID (Primary) <span style="color:#e74c3c">*</span></label>'
+    +'<input id="bksf_callid" type="text" inputmode="numeric" maxlength="16" placeholder="16-digit Dialpad Call ID (required)" value="'+(isEdit?(ed.dialpad_call_id||''):'').replace(/"/g,'&quot;')+'" oninput="this.value=this.value.replace(/\\D/g,\'\').slice(0,16)" style="width:100%;padding:9px 11px;border:1.5px solid #e2e6ed;border-radius:7px;font-size:13px;box-sizing:border-box;letter-spacing:1px;font-family:monospace"></div>'
     +'<div style="margin-bottom:16px;background:#f0f7ff;border:1px solid #c8e0f7;border-radius:8px;padding:12px">'
       +'<label style="font-size:10px;font-weight:700;color:#2471a3;text-transform:uppercase;display:block;margin-bottom:8px">📞 Additional Call IDs (if call dropped &amp; reconnected)</label>'
       +(isEdit&&ed.additional_call_ids&&ed.additional_call_ids.length>0
@@ -5771,10 +5771,19 @@ async function bkStandaloneSave(){
     if(fe){fe.scrollIntoView({behavior:'smooth',block:'center'});try{fe.focus();}catch(e){}}
     return;
   }
-  // Dialpad Call ID — optional but if filled must be exactly 16 digits
+  // Dialpad Call ID — MANDATORY, must be exactly 16 digits
   const callidVal=(document.getElementById('bksf_callid')?.value||'').trim();
-  if(callidVal&&callidVal.length!==16){
-    const ciEl=document.getElementById('bksf_callid');
+  const ciEl=document.getElementById('bksf_callid');
+  if(!callidVal){
+    if(ciEl){ciEl.style.border='1.5px solid #e74c3c';ciEl.style.background='#fdf0ee';}
+    const errMsg='⚠️ Dialpad Call ID is required';
+    if(errEl){errEl.style.display='block';errEl.textContent=errMsg;}
+    showToast(errMsg,'error');
+    if(saveBtn){saveBtn.disabled=false;saveBtn.textContent='💾 Save Booking';}
+    if(ciEl){ciEl.scrollIntoView({behavior:'smooth',block:'center'});try{ciEl.focus();}catch(e){}}
+    return;
+  }
+  if(callidVal.length!==16){
     if(ciEl){ciEl.style.border='1.5px solid #e74c3c';ciEl.style.background='#fdf0ee';}
     const errMsg='⚠️ Dialpad Call ID must be exactly 16 digits';
     if(errEl){errEl.style.display='block';errEl.textContent=errMsg;}
@@ -5782,6 +5791,7 @@ async function bkStandaloneSave(){
     if(saveBtn){saveBtn.disabled=false;saveBtn.textContent='💾 Save Booking';}
     return;
   }
+  if(ciEl){ciEl.style.border='1.5px solid #e2e6ed';ciEl.style.background='#fff';}
   // Duplicate check — same phone + same client + same child = hard block.
   // Siblings (same phone, same client, DIFFERENT child name) are allowed.
   if(!S._bkEditId){
