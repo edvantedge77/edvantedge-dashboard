@@ -1786,6 +1786,8 @@ async function goPage(p){
   if(p==='dashboard'){_agEarnLoaded=false;}
   // Clear any page-specific auto-refresh intervals when navigating
   if(S._todayRefresh && p!=='todayleads'){ clearInterval(S._todayRefresh); S._todayRefresh=null; }
+  // Tear down Quality Realtime subscription when leaving Quality page
+  if(S.page==='quality' && p!=='quality'){ try{_qStopRealtime();}catch(e){} }
   S.page=p;S.filters={};if(S.lMeta)S.lMeta.page=1;S.viewMode='list';S.currentLead=null;S.freshNavMode=false;
   closeNav();
   render();
@@ -7522,6 +7524,7 @@ async function bkSaveBooking(){
     notes:               document.getElementById('bkf_no')?.value||'',
     updated_at:          new Date().toISOString(),
   };
+  let _newBkId=null; // will hold UUID of newly inserted DEMO-BOOKING row
   try{
     if(S._bkEditId){
       // On edit: do NOT send phone_code — unique constraint rejects it even if unchanged
@@ -7537,14 +7540,18 @@ async function bkSaveBooking(){
         const{phone_code:_pc2,...overwriteRec}=rec;
         const{error}=await sb.from('DEMO-BOOKING').update(overwriteRec).eq('id',ex[0].id);
         if(error)throw error;
+        _newBkId=ex[0].id; // overwrite: UUID is already known
         bkToast('Booking overwritten — '+cl+' · '+pn,'warning');
         pushToTuritoIfNeeded(rec, ph);
       } else {
         rec.created_at=new Date().toISOString();
-        const{error}=await sb.from('DEMO-BOOKING').insert(rec);
+        // Use .select('id').single() — get UUID directly, no secondary lookup
+        const{data:insertedBk,error}=await sb.from('DEMO-BOOKING').insert(rec).select('id').single();
         if(error)throw error;
         bkToast('Booking saved — '+cl+' · '+pn);
         pushToTuritoIfNeeded(rec, ph);
+        // Store new UUID for quality pipeline below
+        _newBkId=insertedBk?.id||null;
       }
     }
     document.getElementById('bkAddModal').style.display='none';
@@ -7554,13 +7561,11 @@ async function bkSaveBooking(){
 
     // ── QUALITY PIPELINE: trigger transcript fetch & scoring ──
     // Only for new bookings (not edits), using the DEMO-BOOKING UUID (not crm_leads ID)
-    if(!_wasEdit){
+    if(!_wasEdit && _newBkId){
       const bkCallId=(document.getElementById('bkf_cid')?.value||'').trim();
       try{
-        // Query the newly-inserted (or overwritten) DEMO-BOOKING row to get its UUID
-        const{data:newBk}=await sb.from('DEMO-BOOKING').select('id').eq('phone_code',phFull).eq('client',cl).eq('parent_name',pn).order('created_at',{ascending:false}).limit(1).maybeSingle();
         const qLead={
-          id: newBk?.id || S._bkActiveLead?.id || ('bk_'+Date.now()),
+          id: _newBkId,
           phone_code: phFull, phone: phFull,
           parent_name: pn,
           client_booked: cl,
@@ -16560,7 +16565,8 @@ async function runQualityPipeline(qId, phone, client, region, agentName, parentN
       headers: {'Content-Type':'application/json'},
       body: JSON.stringify({action:'get_transcript', call_id: dialpadCallId})
     });
-    const tData = await tRes.json();
+    let tData={};
+    try{tData=await tRes.json();}catch(jsonErr){tData={error:'Server returned invalid JSON (status '+tRes.status+')'};};
 
     if(!tRes.ok || tData.error){
       const msg = tData.error || `HTTP ${tRes.status}`;
@@ -16893,8 +16899,100 @@ function renderQualityPage(){
         scoreQualityRecord(r.id).catch(e=>console.warn('Auto-score failed for',r.id,e));
       }
     }
+
+    // ── Supabase Realtime — live updates for Quality page (REQ 8) ───────────
+    _qStartRealtime();
   },0);
   return`<div class="pg-title">✅ Quality Scoring</div><div id="quality-content"><div style="padding:2rem;color:var(--text3)">⏳ Loading quality records…</div></div>`;
+}
+
+// ── Quality Realtime subscription ─────────────────────────────────────────────
+let _qRealtimeChannel=null;
+function _qStartRealtime(){
+  // Tear down any previous subscription first
+  if(_qRealtimeChannel){
+    try{sb.removeChannel(_qRealtimeChannel);}catch(e){}
+    _qRealtimeChannel=null;
+  }
+  _qRealtimeChannel=sb.channel('quality_realtime')
+    .on('postgres_changes',{event:'*',schema:'public',table:'quality_results'},payload=>{
+      // Only refresh if Quality page is currently active
+      if(S.page!=='quality') return;
+      const el=document.getElementById('quality-content');
+      if(!el) return;
+      const {eventType,new:rec,old:oldRec}=payload;
+      if(eventType==='INSERT'){
+        // Add new row to cached rows and re-render table
+        if(!window._qualityRows) window._qualityRows=[];
+        window._qualityRows.unshift(rec);
+        _qPatchTable(rec,'insert');
+      } else if(eventType==='UPDATE'){
+        // Update cached row in place and patch table row
+        if(window._qualityRows){
+          const idx=window._qualityRows.findIndex(r=>r.id===rec.id);
+          if(idx>=0) window._qualityRows[idx]=rec; else window._qualityRows.unshift(rec);
+        }
+        _qPatchTable(rec,'update');
+      }
+      // Re-apply filters after patch
+      try{qFilterRows();}catch(e){}
+    })
+    .subscribe(status=>{
+      if(status==='SUBSCRIBED') console.log('[Quality Realtime] subscribed');
+      else if(status==='CLOSED'||status==='CHANNEL_ERROR') console.warn('[Quality Realtime] channel status:',status);
+    });
+}
+function _qStopRealtime(){
+  if(_qRealtimeChannel){try{sb.removeChannel(_qRealtimeChannel);}catch(e){}}_qRealtimeChannel=null;
+}
+function _qPatchTable(rec,action){
+  // Build a single table row HTML string matching the format in renderQualityPage
+  const tbl=document.querySelector('#quality-content table tbody');
+  if(!tbl) return;
+  const qStatusBadge=(s)=>{
+    const m={Valid:'#27ae60',Invalid:'#e74c3c','Manual Review':'#f39c12',Pending:'#95a5a6',Error:'#c0392b'};
+    return`<span style="background:${m[s]||'#95a5a6'};color:#fff;padding:2px 8px;border-radius:4px;font-size:0.78rem">${s||'Pending'}</span>`;
+  };
+  const qPsBadge=(ps)=>{
+    const labels={'pending_transcript':'Awaiting Call ID','fetching_transcript':'Fetching…','transcript_ready':'Ready','scoring':'Scoring…','scored':'Scored','transcript_error':'Fetch Error','scoring_error':'Score Error'};
+    return`<span style="font-size:0.78rem;color:var(--text3)">${labels[ps]||ps||''}</span>`;
+  };
+  const dt=rec.disposed_at?rec.disposed_at.slice(0,10):'';
+  const sc=rec.weighted_score||rec.score||'—';
+  const callIds=[rec.dialpad_call_id,...(rec.additional_call_ids||[])].filter(Boolean).join(', ')||'—';
+  const rowId='qrow-'+rec.id;
+  const rowHtml=`<tr id="${rowId}" data-qid="${rec.id}" data-qstatus="${rec.quality_status||''}" data-ps="${rec.processing_status||''}" data-agent="${rec.agent_name||''}" data-client="${rec.client||''}" data-region="${rec.region||''}" data-date="${dt}">
+    <td>${dt}</td>
+    <td>${rec.agent_name||''}</td>
+    <td>${rec.parent_name||''}</td>
+    <td>${rec.phone||''}</td>
+    <td>${rec.client||''}</td>
+    <td>${rec.region||''}</td>
+    <td>${callIds}</td>
+    <td>${qStatusBadge(rec.quality_status)}</td>
+    <td>${sc}</td>
+    <td>${qPsBadge(rec.processing_status)}</td>
+    <td><button onclick="qShowDetail('${rec.id}')" style="padding:2px 10px;background:var(--accent);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:0.8rem">View</button></td>
+  </tr>`;
+  if(action==='insert'){
+    tbl.insertAdjacentHTML('afterbegin',rowHtml);
+    // Update stat tiles
+    try{
+      const pending=tbl.querySelectorAll('tr[data-qstatus="Pending"]').length;
+      const valid=tbl.querySelectorAll('tr[data-qstatus="Valid"]').length;
+      const invalid=tbl.querySelectorAll('tr[data-qstatus="Invalid"]').length;
+      const review=tbl.querySelectorAll('tr[data-qstatus="Manual Review"]').length;
+      const vals=document.querySelectorAll('.metrics .val');
+      if(vals[0])vals[0].textContent=valid;
+      if(vals[1])vals[1].textContent=invalid;
+      if(vals[2])vals[2].textContent=review;
+      if(vals[3])vals[3].textContent=pending;
+    }catch(e){}
+  } else {
+    const existing=document.getElementById(rowId);
+    if(existing) existing.outerHTML=rowHtml;
+    else tbl.insertAdjacentHTML('afterbegin',rowHtml);
+  }
 }
 
 async function qAddCallId(qId){
