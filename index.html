@@ -1021,7 +1021,8 @@ function uid(){return Math.random().toString(36).slice(2,9);}
 function fmt(n){return Number(n||0).toLocaleString('en-IN');}
 function ini(n){return(n||'?').split(' ').map(x=>x[0]).join('').toUpperCase().slice(0,2);}
 function isSA(){return S.user&&S.user.role==='superadmin';}
-function isInternalAdmin(){return S.user&&(S.user.role==='superadmin'||S.user.role==='admin');}
+function isInternalAdmin(){return S.user&&(S.user.role==='superadmin'||S.user.role==='admin'||S.user.role==='partner_admin');}
+function isPartnerAdmin(){return S.user&&S.user.role==='partner_admin';}
 
 // ── Copy/paste/right-click lock for non-admin users ────────────────────────
 // Applies document-wide (capture phase) so it also covers modals, which are
@@ -1414,6 +1415,23 @@ async function loadDash(){
     S.dash={tot:data.tot,un:data.un,ds:data.ds,dd:data.dd,nw:data.nw,hot:data.hot,fp:data.fp,
       usCount:data.usCount||0,ukCount:data.ukCount||0,ausCount:data.ausCount||0};
     S._agentCountsCache=data.agentCounts||{}; // reused by loadAsgnData — avoids a second round of per-agent count queries
+  }else if(isPartnerAdmin()){
+    // Partner admin: load stats scoped to their agents only
+    const scopedIds=getScopedAgentIds();
+    if(!scopedIds||!scopedIds.length){S.dash={tot:0,ds:0,dd:0,nw:0,hot:0,fp:0,usCount:0,ukCount:0,ausCount:0};return;}
+    const[tot,ds,dd,nw,hot,fp,ukCount,ausCount,usCount]=await Promise.all([
+      sb.from('crm_leads').select('id',{count:'exact',head:true}).in('agent_id',scopedIds),
+      sb.from('crm_leads').select('id',{count:'exact',head:true}).in('agent_id',scopedIds).eq('disposition','Demo Scheduled'),
+      sb.from('crm_leads').select('id',{count:'exact',head:true}).in('agent_id',scopedIds).eq('booking_status','Demo Done'),
+      sb.from('crm_leads').select('id',{count:'exact',head:true}).in('agent_id',scopedIds).in('disposition',NONWORK_DISPS),
+      sb.from('crm_leads').select('id',{count:'exact',head:true}).in('agent_id',scopedIds).eq('disposition','Hot'),
+      sb.from('crm_leads').select('id',{count:'exact',head:true}).in('agent_id',scopedIds).eq('disposition','Future Potential (outside 30 days)'),
+      sb.from('crm_leads').select('id',{count:'exact',head:true}).in('agent_id',scopedIds).eq('Country','United Kingdom'),
+      sb.from('crm_leads').select('id',{count:'exact',head:true}).in('agent_id',scopedIds).eq('Country','Australia'),
+      sb.from('crm_leads').select('id',{count:'exact',head:true}).in('agent_id',scopedIds).eq('Country','USA'),
+    ]);
+    S.dash={tot:tot.count||0,ds:ds.count||0,dd:dd.count||0,nw:nw.count||0,hot:hot.count||0,fp:fp.count||0,
+      usCount:usCount?.count||0,ukCount:ukCount?.count||0,ausCount:ausCount?.count||0};
   }else{
     const uid=S.user.id;
     // Session window: from login time (anchored to 9hr shift, not IST midnight)
@@ -9169,7 +9187,7 @@ function renderApp(){
   const _uname=(u?.username||'').toLowerCase();
   const _uname2=(u?.name||'').toLowerCase();
   const navRestriction=!sa?(AGENT_NAV_RESTRICTIONS[_uname]||AGENT_NAV_RESTRICTIONS[_uname2]):null;
-  const adminScope=isInternalAdmin()&&!sa?(ADMIN_DATA_SCOPE[_uname]||ADMIN_DATA_SCOPE[_uname2]):null;
+  const adminScope=(isInternalAdmin()||isPartnerAdmin())&&!sa?(ADMIN_DATA_SCOPE[_uname]||ADMIN_DATA_SCOPE[_uname2]):null;
   const saNav=[
     {id:'dashboard',icon:'◈',label:'Dashboard'},
     {id:'leads',icon:'≡',label:'All Leads'},
@@ -9299,7 +9317,7 @@ function renderApp(){
           </div>`:''}
         </div>`}
       </div>
-      ${!sa?`<div class="break-bar">
+      ${(!sa&&!isPartnerAdmin())?`<div class="break-bar">
         <div class="break-bar-title">Break tracking</div>
         ${[['sb1','Short Break 1 (15 min)'],['sb2','Short Break 2 (15 min)'],['db','Dinner Break (30 min)']].map(([k,l])=>`
           <button class="break-btn ${S.breaks[k]?'active':''}" onclick="toggleBreak('${k}')">
@@ -9313,7 +9331,7 @@ function renderApp(){
     </div>
     <div class="main">
       <div class="main-in">
-        ${sa?renderSAPages():renderAgentPages()}
+        ${(sa||isPartnerAdmin())?renderSAPages():renderAgentPages()}
       </div>
     </div>
   </div>`;
@@ -10175,8 +10193,10 @@ function renderAccessAlertsWidget(){
 }
 function renderSADash(){
   const d=S.dash||{};
-  return '<div class="pg-title" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">Dashboard'
-    +'<span style="font-size:13px;font-weight:400;color:var(--text2)">Admin &mdash; '+new Date().toLocaleDateString('en-IN',{weekday:'long',day:'2-digit',month:'long',year:'numeric'})+'</span>'
+  const _dashTitle=isPartnerAdmin()?('My Dashboard &mdash; '+h(S.user.name)):'Dashboard';
+  const _dashSubtitle=isPartnerAdmin()?'Partner View &mdash; ':'Admin &mdash; ';
+  return '<div class="pg-title" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">'+_dashTitle
+    +'<span style="font-size:13px;font-weight:400;color:var(--text2)">'+_dashSubtitle+new Date().toLocaleDateString('en-IN',{weekday:'long',day:'2-digit',month:'long',year:'numeric'})+'</span>'
     +'<button class="btn btn-sm btn-outline" onclick="loadDash().then(()=>{render();onDashboardReady();}).catch(()=>render())" style="font-size:12px;padding:5px 12px">↻ Refresh</button></div>'
     +'<div class="card" style="margin-bottom:1rem">'
     +'<div class="card-hdr" style="margin-bottom:10px">'
@@ -10185,7 +10205,7 @@ function renderSADash(){
     +'</div>'
     +'<div id="today-demo-schedule"><div style="color:var(--text3);font-size:12px;padding:8px 0;text-align:center">⏳ Loading demo schedule…</div></div>'
     +'</div>'
-    +'<div class="cr-card">'+'<div class="cr-top">'+'<span class="cr-top-title">📋 Closing Report</span>'+'<input type=\"date\" id=\"cr-date-input\" onchange=\"crLoad(this.value)\" style=\"padding:4px 9px;border:none;border-radius:7px;font-size:11px;font-weight:700;background:rgba(255,255,255,.15);color:#fff;cursor:pointer;outline:none\">'+'<button onclick=\"crLoad(document.getElementById(\'cr-date-input\').value)\" style=\"padding:4px 12px;background:rgba(255,255,255,.18);color:#fff;border:none;border-radius:8px;font-size:11px;font-weight:700;cursor:pointer\">↻</button>'+'<div class="cr-top-chips">'+'<div class="cr-chip"><span class="cn" id="cr-chip-ds" style="color:#f5c518">—</span><span>DS</span></div>'+'<div class="cr-chip"><span class="cn" id="cr-chip-aus" style="color:#7ecfbd">—</span><span>AUS</span></div>'+'<div class="cr-chip"><span class="cn" id="cr-chip-uk" style="color:#90bef5">—</span><span>UK</span></div>'+'<div class="cr-chip"><span class="cn" id="cr-chip-us" style="color:#c9a0f0">—</span><span>US</span></div>'+'<div class="cr-chip"><span class="cn" id="cr-chip-uae" style="color:#f5a623">—</span><span>🇦🇪 UAE</span></div>'+'<div class="cr-chip"><span class="cn" id="cr-chip-dd" style="color:#7ecfbd">—</span><span>D-Day</span></div>'+'<div class="cr-chip"><span class="cn" id="cr-chip-done" style="color:#1a8a5a">—</span><span>Done</span></div>'+'</div></div>'+'<div id="cr-body-dash"><div style="color:var(--text3);font-size:12px;padding:16px;text-align:center">⏳ Loading…</div></div>'+'</div>'
+    +(isPartnerAdmin()?'':'<div class="cr-card">'+'<div class="cr-top">'+'<span class="cr-top-title">📋 Closing Report</span>'+'<input type=\"date\" id=\"cr-date-input\" onchange=\"crLoad(this.value)\" style=\"padding:4px 9px;border:none;border-radius:7px;font-size:11px;font-weight:700;background:rgba(255,255,255,.15);color:#fff;cursor:pointer;outline:none\">'+'<button onclick=\"crLoad(document.getElementById(\'cr-date-input\').value)\" style=\"padding:4px 12px;background:rgba(255,255,255,.18);color:#fff;border:none;border-radius:8px;font-size:11px;font-weight:700;cursor:pointer\">↻</button>'+'<div class="cr-top-chips">'+'<div class="cr-chip"><span class="cn" id="cr-chip-ds" style="color:#f5c518">—</span><span>DS</span></div>'+'<div class="cr-chip"><span class="cn" id="cr-chip-aus" style="color:#7ecfbd">—</span><span>AUS</span></div>'+'<div class="cr-chip"><span class="cn" id="cr-chip-uk" style="color:#90bef5">—</span><span>UK</span></div>'+'<div class="cr-chip"><span class="cn" id="cr-chip-us" style="color:#c9a0f0">—</span><span>US</span></div>'+'<div class="cr-chip"><span class="cn" id="cr-chip-uae" style="color:#f5a623">—</span><span>🇦🇪 UAE</span></div>'+'<div class="cr-chip"><span class="cn" id="cr-chip-dd" style="color:#7ecfbd">—</span><span>D-Day</span></div>'+'<div class="cr-chip"><span class="cn" id="cr-chip-done" style="color:#1a8a5a">—</span><span>Done</span></div>'+'</div></div>'+'<div id="cr-body-dash"><div style="color:var(--text3);font-size:12px;padding:16px;text-align:center">⏳ Loading…</div></div>'+'</div>')
     +'<div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-bottom:8px">'
     +'<span style="font-size:12px;font-weight:700;color:var(--text2)">Activity:</span>'
     +['today','week','mtd'].map(function(p){var lbl={today:'Today',week:'This Week',mtd:'MTD'}[p];var ac=(S.pillPeriod||'today')===p;return '<button onclick="setPillPeriod(\''+p+'\')" style="padding:6px 14px;border-radius:14px;font-size:11px;font-weight:700;cursor:pointer;'+(ac?'background:var(--red);color:#fff;border:2px solid var(--red)':'background:#fff;color:#333;border:2px solid #ddd')+'">'+lbl+'</button>';}).join('')
@@ -10196,9 +10216,8 @@ function renderSADash(){
     +'<button onclick="pillExportCSV()" style="padding:6px 14px;background:#C0392B;color:#fff;border:none;border-radius:20px;font-size:11px;font-weight:800;cursor:pointer;letter-spacing:.02em">⬇ Export CSV</button>'
     +'</div>'
     +'<div id="admin-pill-table" style="display:block"></div>'
-    +'<div id="access-alerts-widget">'+renderAccessAlertsWidget()+'</div>'
-    +'<div id="alloc-overview">'+renderAllocOverview()+'</div>'
-    +'<div class="card" style="margin-bottom:1rem">'
+    +(isPartnerAdmin()?'':'<div id="access-alerts-widget">'+renderAccessAlertsWidget()+'</div>'+'<div id="alloc-overview">'+renderAllocOverview()+'</div>')
+    +(isPartnerAdmin()?'':'<div class="card" style="margin-bottom:1rem">'
     +'<div class="card-hdr" style="margin-bottom:12px;flex-wrap:wrap;gap:8px">'
     +'<div class="card-title" style="margin:0">&#128203; Client Dashboard &mdash; DS/DD Performance</div>'
     +'<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
@@ -10224,7 +10243,7 @@ function renderSADash(){
     +'<th>WK 3</th>'
     +'<th>WK 4</th>'
     +'<th>WK 5</th>'
-    +'</tr></thead><tbody id="admin-cl-body"><tr><td colspan="11" style="color:var(--text3);padding:20px;text-align:center">Loading...</td></tr></tbody></table></div></div>';
+    +'</tr></thead><tbody id="admin-cl-body"><tr><td colspan="11" style="color:var(--text3);padding:20px;text-align:center">Loading...</td></tr></tbody></table></div></div>');
 }
 
 // ── AGENT DASHBOARD ───────────────────────────────────────────
@@ -13869,7 +13888,7 @@ function onDashboardReady(){
   if(S.user&&S.user.role!=='agent'){
     loadPerfDataOnly().then(function(){loadAdminDashData();loadAgentStats();}).catch(function(){});
     refreshAdminPill();
-    try{crDashInit();}catch(e){}
+    if(!isPartnerAdmin()){try{crDashInit();}catch(e){}}
     // Disposition Analysis no longer auto-runs here — it pulls Recycled Leads,
     // Cooling 30+, and today's per-agent activity, which is a real cost to run
     // on every login. It now only loads when you open Reports/Disposition
@@ -13919,6 +13938,11 @@ async function loadTodayDemoSchedule(){
       .gte('demo_date',dateFrom).lte('demo_date',dateTo)
       .order('demo_time_ist',{ascending:true});
     if(isAgent) q=q.ilike('agent',S.user.name);
+    else if(isPartnerAdmin()){
+      // scope to partner's agents by name
+      const scopedUsers=(S.users||[]).filter(u=>getScopedAgentIds()&&getScopedAgentIds().includes(u.id)).map(u=>u.name).filter(Boolean);
+      if(scopedUsers.length) q=q.in('agent',scopedUsers);
+    }
     const{data,error}=await q;
     if(error) throw error;
 
@@ -14435,7 +14459,8 @@ async function setPillCustom(){
   await refreshAdminPill();
 }
 async function refreshAdminPill(){
-  var agents2=(S.users||[]).filter(function(u){return u.role==='agent'&&u.active!==false;});
+  var _allAgents=(S.users||[]).filter(function(u){return u.role==='agent'&&u.active!==false;});
+  var agents2=isPartnerAdmin()?(function(){var sIds=getScopedAgentIds()||[];return _allAgents.filter(function(u){return sIds.includes(u.id);});}()):_allAgents;
   var agIds=agents2.map(function(a){return a.id;});
   try{
     var pFrom=S.pillFrom||new Date(new Date().getTime()+5.5*3600000).toISOString().slice(0,10);
