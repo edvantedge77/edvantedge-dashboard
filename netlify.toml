@@ -12,6 +12,10 @@
 [functions."score-transcript"]
   timeout = 26
 
+[functions."process-quality-queue"]
+  timeout = 26
+  schedule = "*/5 * * * *"
+
 [[headers]]
   for = "/api/*"
   [headers.values]

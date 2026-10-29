@@ -1786,8 +1786,8 @@ async function goPage(p){
   if(p==='dashboard'){_agEarnLoaded=false;}
   // Clear any page-specific auto-refresh intervals when navigating
   if(S._todayRefresh && p!=='todayleads'){ clearInterval(S._todayRefresh); S._todayRefresh=null; }
-  // Tear down Quality Realtime subscription when leaving Quality page
-  if(S.page==='quality' && p!=='quality'){ try{_qStopRealtime();}catch(e){} }
+  // Tear down Quality Realtime subscription + poll when leaving Quality page
+  if(S.page==='quality' && p!=='quality'){ try{_qStopRealtime();}catch(e){} try{_qStopPoll();}catch(e){} }
   S.page=p;S.filters={};if(S.lMeta)S.lMeta.page=1;S.viewMode='list';S.currentLead=null;S.freshNavMode=false;
   closeNav();
   render();
@@ -16832,11 +16832,12 @@ function renderQualityPage(){
                 <span style="font-size:11px;font-weight:700;padding:3px 10px;border-radius:20px;background:${stBg};color:${stColor}">${r.quality_status==='Pending'?'⏳ Pending':r.quality_status||'—'}</span>
               </td>
               <td style="padding:9px 12px;font-size:11px;color:var(--text2);max-width:200px">${
-                r.processing_status==='scoring'?'<span style="color:#f39c12;font-size:11px">⚙️ Scoring…</span>'
-                :r.processing_status==='fetching_transcript'?'<span style="color:#f39c12;font-size:11px">⏳ Fetching transcript…</span>'
-                :r.processing_status==='transcript_ready'?'<span style="color:#2471a3;font-size:11px">📝 Transcript ready — scoring starting…</span>'
-                :r.processing_status==='transcript_error'?'<span style="color:#c0392b;font-size:11px">⚠️ Transcript error</span>'
+                r.processing_status==='scoring'?'<span style="color:#f39c12;font-size:11px">⚙️ Scoring… (auto-queue)</span>'
+                :r.processing_status==='fetching_transcript'?'<span style="color:#f39c12;font-size:11px">⏳ Fetching transcript… (auto-queue)</span>'
+                :r.processing_status==='transcript_ready'?'<span style="color:#2471a3;font-size:11px">📝 Transcript ready — scoring queued</span>'
+                :r.processing_status==='transcript_error'?'<span style="color:#c0392b;font-size:11px">⚠️ Transcript error — queue will retry</span>'
                 :r.processing_status==='pending_transcript'?'<span style="color:#888;font-size:11px">Awaiting Call ID</span>'
+                :r.processing_status==='failed'?'<span style="color:#c0392b;font-size:11px">⚠️ Failed — queue will retry</span>'
                 :h(summary)
               }</td>
               <td style="padding:9px 12px;text-align:center">
@@ -16902,6 +16903,11 @@ function renderQualityPage(){
 
     // ── Supabase Realtime — live updates for Quality page (REQ 8) ───────────
     _qStartRealtime();
+
+    // ── Poll for in-flight records every 30s ─────────────────────────────────
+    // Realtime handles immediate updates; this poll catches any records that
+    // are mid-processing in the server-side queue so the UI stays fresh.
+    _qStartPoll(rows);
   },0);
   return`<div class="pg-title">✅ Quality Scoring</div><div id="quality-content"><div style="padding:2rem;color:var(--text3)">⏳ Loading quality records…</div></div>`;
 }
@@ -16944,6 +16950,42 @@ function _qStartRealtime(){
 }
 function _qStopRealtime(){
   if(_qRealtimeChannel){try{sb.removeChannel(_qRealtimeChannel);}catch(e){}}_qRealtimeChannel=null;
+}
+
+// ── Quality poll — refreshes rows that are still processing ──────────────────
+let _qPollTimer=null;
+function _qStartPoll(initialRows){
+  _qStopPoll();
+  // Only poll if there are in-flight records
+  const inFlight=(initialRows||[]).filter(r=>['fetching_transcript','scoring','transcript_ready','pending_transcript'].includes(r.processing_status)&&r.dialpad_call_id);
+  if(!inFlight.length) return;
+  console.log(`[Quality Poll] ${inFlight.length} in-flight record(s) — polling every 30s`);
+  _qPollTimer=setInterval(async()=>{
+    if(S.page!=='quality'){_qStopPoll();return;}
+    // Re-fetch only the in-flight rows
+    const ids=inFlight.map(r=>r.id);
+    const{data:fresh}=await sb.from('quality_results')
+      .select('id,quality_status,processing_status,score,weighted_score,ai_summary,scored_at')
+      .in('id',ids);
+    if(!fresh||!fresh.length) return;
+    let anyDone=true;
+    fresh.forEach(r=>{
+      if(['scored','transcript_error','scoring_error','failed'].includes(r.processing_status)){
+        // Patch via Realtime handler (reuse _qPatchTable)
+        const cached=(window._qualityRows||[]).find(x=>x.id===r.id);
+        if(cached){Object.assign(cached,r);_qPatchTable(Object.assign({},cached,r),'update');}
+      } else { anyDone=false; }
+    });
+    // Stop polling once all previously in-flight records are resolved
+    if(fresh.every(r=>['scored','transcript_error','scoring_error','failed'].includes(r.processing_status))){
+      console.log('[Quality Poll] All in-flight records resolved — stopping poll');
+      _qStopPoll();
+    }
+    try{qFilterRows();}catch(e){}
+  },30000);
+}
+function _qStopPoll(){
+  if(_qPollTimer){clearInterval(_qPollTimer);_qPollTimer=null;}
 }
 function _qPatchTable(rec,action){
   // Build a single table row HTML string matching the format in renderQualityPage
