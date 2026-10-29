@@ -9134,8 +9134,8 @@ const AGENT_NAV_RESTRICTIONS={
 // 'agents' = CRM usernames (lowercase) whose data this admin may access.
 // 'noEarnings' = hide the Demo Earnings card on agent dashboard (if logged in as agent).
 const ADMIN_DATA_SCOPE={
-  // ajinkya: scoped admin — sees only Kartik's data; nav limited to 3 pages
-  ajinkya:{agents:['kartik'],noEarnings:true,allowPages:['leads','bookings','agentkitty']},
+  // ajinkya: channel partner — sees only Kartik & Krish data across all 8 pages
+  ajinkya:{agents:['kartik1','krish'],noEarnings:true,allowPages:['dashboard','performance','bookings','agentkitty','quality','leads','todayleads','reports']},
 };
 // Returns the scope config for the current user (admin only), or null.
 function getAdminScope(){
