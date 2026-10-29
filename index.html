@@ -16804,11 +16804,10 @@ function renderQualityPage(){
           <th style="background:#1A2D42;color:rgba(255,255,255,.7);font-size:10px;text-transform:uppercase;padding:9px 12px;text-align:left">Summary</th>
           <th style="background:#1A2D42;color:rgba(255,255,255,.7);font-size:10px;text-transform:uppercase;padding:9px 12px;text-align:center">Recording</th>
           <th style="background:#1A2D42;color:rgba(255,255,255,.7);font-size:10px;text-transform:uppercase;padding:9px 12px;text-align:left">Date</th>
-          <th style="background:#1A2D42;color:rgba(255,255,255,.7);font-size:10px;text-transform:uppercase;padding:9px 12px;text-align:center">Detail</th>
-          <th style="background:#1A2D42;color:rgba(255,255,255,.7);font-size:10px;text-transform:uppercase;padding:9px 12px;text-align:center">Transcript</th>
+          <th style="background:#1A2D42;color:rgba(255,255,255,.7);font-size:10px;text-transform:uppercase;padding:9px 12px;text-align:center">Actions</th>
         </tr></thead><tbody id="quality-tbody">
         ${(rows||[]).length===0
-          ?`<tr><td colspan="${isAdm?10:9}" style="padding:2rem;text-align:center;color:var(--text3)">No quality records yet. Records appear after Demo Scheduled dispositions are saved.</td></tr>`
+          ?`<tr><td colspan="${isAdm?9:8}" style="padding:2rem;text-align:center;color:var(--text3)">No quality records yet. Records appear after Demo Scheduled dispositions are saved.</td></tr>`
           :(rows||[]).map(r=>{
             const stColor=r.quality_status==='Valid'?'#27ae60':r.quality_status==='Invalid'?'#c0392b':r.quality_status==='Manual Review'?'#b8860b':r.quality_status==='Pending'?'#f39c12':'#888';
             const stBg=r.quality_status==='Valid'?'#e8f5e9':r.quality_status==='Invalid'?'#fdecea':r.quality_status==='Manual Review'?'#fff8e1':r.quality_status==='Pending'?'#fff8e1':'#f5f5f5';
@@ -16871,24 +16870,22 @@ function renderQualityPage(){
               </td>
               <td style="padding:9px 12px;font-size:11px;color:var(--text3)">${date}</td>
               <td style="padding:9px 12px;text-align:center">
-                ${hasDetail
-                  ?`<button class="btn btn-sm btn-outline" onclick="showQualityDetail('${r.id}')" style="font-size:11px;padding:3px 8px">View</button>`
-                  :(r.processing_status==='transcript_ready'||r.processing_status==='scoring')&&r.transcript
-                  ?`<button onclick="qScoreNow('${r.id}')" style="font-size:11px;padding:3px 9px;border-radius:6px;border:1px solid #7d3c98;background:#f5eef8;color:#7d3c98;cursor:pointer;font-weight:600">⚙️ Score Now</button>`
-                  :'<span style="color:var(--text3);font-size:11px">—</span>'}
-              </td>
-              <td style="padding:9px 12px;text-align:center">
-                ${r.processing_status==='pending_transcript'
-                  ?(r.dialpad_call_id
-                    ?`<button onclick="showQualityDetail('${r.id}')" style="font-size:11px;padding:3px 9px;border-radius:6px;border:1px solid #27ae60;background:#e8f5e9;color:#1a7a40;cursor:pointer;font-weight:600">📞 ${1+(r.additional_call_ids||[]).length} Call ID(s) — Add More</button>`
-                    :`<button onclick="qAddCallId('${r.id}')" style="font-size:11px;padding:3px 9px;border-radius:6px;border:1px solid #2471a3;background:#eaf4fb;color:#2471a3;cursor:pointer;font-weight:600">📞 Add Call ID</button>`)
-                  :r.processing_status==='transcript_error'
-                  ?`<button onclick="qRetryTranscript('${r.id}','${h(r.dialpad_call_id||'')}')" style="font-size:11px;padding:3px 9px;border-radius:6px;border:1px solid #e74c3c;background:#fdecea;color:#c0392b;cursor:pointer;font-weight:600">🔄 Retry</button> <button onclick="qResetCallId('${r.id}')" title="Wrong Call ID? Reset and re-enter" style="font-size:10px;padding:2px 6px;border-radius:4px;border:1px solid #888;background:#f5f5f5;color:#555;cursor:pointer;margin-left:3px">↺ Reset</button>`
-                  :r.processing_status==='fetching_transcript'
-                  ?`<span style="font-size:11px;color:#f39c12">⏳ Fetching…</span> <button onclick="qResetCallId('${r.id}')" title="Wrong Call ID? Reset and re-enter" style="font-size:10px;padding:2px 6px;border-radius:4px;border:1px solid #888;background:#f5f5f5;color:#555;cursor:pointer;margin-left:3px">↺ Reset</button>`
-                  :r.transcript
-                  ?`<span style="font-size:11px;color:#27ae60">✅ Done</span> <button onclick="qAddCallId('${r.id}')" title="Add another call ID" style="font-size:10px;padding:2px 6px;border-radius:4px;border:1px solid #27ae60;background:#e8f5e9;color:#27ae60;cursor:pointer;margin-left:3px">➕</button> <button onclick="qResetCallId('${r.id}')" title="Reset — clear Call ID and transcript if wrong" style="font-size:10px;padding:2px 6px;border-radius:4px;border:1px solid #e74c3c;background:#fdecea;color:#c0392b;cursor:pointer;margin-left:2px">🔄 Reset</button>`
-                  :'<span style="color:var(--text3);font-size:11px">—</span>'}
+                <div style="display:flex;gap:4px;justify-content:center;flex-wrap:wrap">
+                ${r.processing_status==='scored'||hasDetail
+                  /* SCORED — show View + Reset */
+                  ?`<button class="btn btn-sm btn-outline" onclick="showQualityDetail('${r.id}')" style="font-size:11px;padding:3px 10px">👁 View</button>`+
+                   `<button onclick="qResetCallId('${r.id}')" title="Reset record" style="font-size:11px;padding:3px 8px;border-radius:6px;border:1px solid #ccc;background:#f5f5f5;color:#555;cursor:pointer">↺ Reset</button>`
+                  :!r.dialpad_call_id||r.processing_status==='pending_transcript'&&!r.dialpad_call_id
+                  /* NO CALL ID — show Add Call ID */
+                  ?`<button onclick="qAddCallId('${r.id}')" style="font-size:11px;padding:3px 10px;border-radius:6px;border:1px solid #2471a3;background:#eaf4fb;color:#2471a3;cursor:pointer;font-weight:600">📞 Add Call ID</button>`
+                  :r.processing_status==='fetching_transcript'||r.processing_status==='scoring'
+                  /* IN PROGRESS — show spinner + Reset */
+                  ?`<span style="font-size:11px;color:#f39c12">${r.processing_status==='scoring'?'⚙️ Scoring…':'⏳ Fetching…'}</span>`+
+                   `<button onclick="qResetCallId('${r.id}')" title="Reset if stuck" style="font-size:11px;padding:3px 8px;border-radius:6px;border:1px solid #ccc;background:#f5f5f5;color:#555;cursor:pointer">↺ Reset</button>`
+                  /* HAS CALL ID, NOT YET PROCESSED — show Fetch & Score + Reset */
+                  :`<button onclick="qAddCallId('${r.id}')" style="font-size:11px;padding:3px 10px;border-radius:6px;border:1px solid #27ae60;background:#e8f5e9;color:#1a7a40;cursor:pointer;font-weight:600">⚡ Fetch & Score</button>`+
+                   `<button onclick="qResetCallId('${r.id}')" title="Reset record" style="font-size:11px;padding:3px 8px;border-radius:6px;border:1px solid #ccc;background:#f5f5f5;color:#555;cursor:pointer">↺ Reset</button>`}
+                </div>
               </td>
             </tr>`;
           }).join('')}
@@ -17064,11 +17061,18 @@ function _qPatchTable(rec,action){
 }
 
 async function qAddCallId(qId){
-  const callId=prompt('Enter the 16-digit Dialpad Call ID for this record:');
-  if(!callId)return;
-  const clean=callId.replace(/\D/g,'');
-  if(clean.length!==16){showToast('⚠️ Call ID must be exactly 16 digits','error');return;}
-  showToast('⏳ Saving Call ID and fetching transcript…');
+  // If the record already has a call ID (Fetch & Score flow), use it directly
+  const existingRow=(window._qualityRows||[]).find(r=>r.id===qId);
+  let clean='';
+  if(existingRow?.dialpad_call_id){
+    clean=existingRow.dialpad_call_id.replace(/\D/g,'');
+  } else {
+    const callId=prompt('Enter the 16-digit Dialpad Call ID for this record:');
+    if(!callId)return;
+    clean=callId.replace(/\D/g,'');
+    if(clean.length!==16){showToast('⚠️ Call ID must be exactly 16 digits','error');return;}
+  }
+  showToast('⏳ Fetching transcript…');
   await sb.from('quality_results').update({dialpad_call_id:clean,processing_status:'fetching_transcript'}).eq('id',qId);
   // Fetch transcript via proxy
   try{
