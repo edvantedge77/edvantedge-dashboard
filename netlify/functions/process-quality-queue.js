@@ -106,7 +106,7 @@ exports.handler = async (event) => {
       `select=id,dialpad_call_id,client,region,agent_name,parent_name,phone,disposed_at,processing_status,transcript,additional_call_ids` +
       `&processing_status=in.(fetching_transcript,pending_transcript,transcript_ready,scoring)` +
       `&dialpad_call_id=not.is.null` +
-      `&disposed_at=gte.2026-10-29` +
+      `&disposed_at=gte.2026-10-30` +
       `&order=disposed_at.asc`
     );
   } catch(e){
