@@ -16872,18 +16872,21 @@ function renderQualityPage(){
               <td style="padding:9px 12px;text-align:center">
                 <div style="display:flex;gap:4px;justify-content:center;flex-wrap:wrap">
                 ${r.processing_status==='scored'||hasDetail
-                  /* SCORED — show View + Reset */
+                  /* SCORED — show View + Add More Call ID + Reset */
                   ?`<button class="btn btn-sm btn-outline" onclick="showQualityDetail('${r.id}')" style="font-size:11px;padding:3px 10px">👁 View</button>`+
+                   `<button onclick="qAddMoreCallId('${r.id}')" title="Add another Call ID" style="font-size:11px;padding:3px 8px;border-radius:6px;border:1px solid #8e44ad;background:#f5eef8;color:#8e44ad;cursor:pointer">➕ Add Call ID</button>`+
                    `<button onclick="qResetCallId('${r.id}')" title="Reset record" style="font-size:11px;padding:3px 8px;border-radius:6px;border:1px solid #ccc;background:#f5f5f5;color:#555;cursor:pointer">↺ Reset</button>`
-                  :!r.dialpad_call_id||r.processing_status==='pending_transcript'&&!r.dialpad_call_id
+                  :!r.dialpad_call_id
                   /* NO CALL ID — show Add Call ID */
                   ?`<button onclick="qAddCallId('${r.id}')" style="font-size:11px;padding:3px 10px;border-radius:6px;border:1px solid #2471a3;background:#eaf4fb;color:#2471a3;cursor:pointer;font-weight:600">📞 Add Call ID</button>`
                   :r.processing_status==='fetching_transcript'||r.processing_status==='scoring'
-                  /* IN PROGRESS — show spinner + Reset */
+                  /* IN PROGRESS — show spinner + Add More + Reset */
                   ?`<span style="font-size:11px;color:#f39c12">${r.processing_status==='scoring'?'⚙️ Scoring…':'⏳ Fetching…'}</span>`+
+                   `<button onclick="qAddMoreCallId('${r.id}')" title="Add another Call ID" style="font-size:11px;padding:3px 8px;border-radius:6px;border:1px solid #8e44ad;background:#f5eef8;color:#8e44ad;cursor:pointer">➕ Add Call ID</button>`+
                    `<button onclick="qResetCallId('${r.id}')" title="Reset if stuck" style="font-size:11px;padding:3px 8px;border-radius:6px;border:1px solid #ccc;background:#f5f5f5;color:#555;cursor:pointer">↺ Reset</button>`
-                  /* HAS CALL ID, NOT YET PROCESSED — show Fetch & Score + Reset */
-                  :`<button onclick="qAddCallId('${r.id}')" style="font-size:11px;padding:3px 10px;border-radius:6px;border:1px solid #27ae60;background:#e8f5e9;color:#1a7a40;cursor:pointer;font-weight:600">⚡ Fetch & Score</button>`+
+                  /* HAS CALL ID, NOT YET PROCESSED — show Add Call ID (will trigger fetch) + Add More + Reset */
+                  :`<button onclick="qAddCallId('${r.id}')" style="font-size:11px;padding:3px 10px;border-radius:6px;border:1px solid #2471a3;background:#eaf4fb;color:#2471a3;cursor:pointer;font-weight:600">📞 Add Call ID</button>`+
+                   `<button onclick="qAddMoreCallId('${r.id}')" title="Add another Call ID" style="font-size:11px;padding:3px 8px;border-radius:6px;border:1px solid #8e44ad;background:#f5eef8;color:#8e44ad;cursor:pointer">➕ Add Call ID</button>`+
                    `<button onclick="qResetCallId('${r.id}')" title="Reset record" style="font-size:11px;padding:3px 8px;border-radius:6px;border:1px solid #ccc;background:#f5f5f5;color:#555;cursor:pointer">↺ Reset</button>`}
                 </div>
               </td>
@@ -17061,17 +17064,11 @@ function _qPatchTable(rec,action){
 }
 
 async function qAddCallId(qId){
-  // If the record already has a call ID (Fetch & Score flow), use it directly
-  const existingRow=(window._qualityRows||[]).find(r=>r.id===qId);
-  let clean='';
-  if(existingRow?.dialpad_call_id){
-    clean=existingRow.dialpad_call_id.replace(/\D/g,'');
-  } else {
-    const callId=prompt('Enter the 16-digit Dialpad Call ID for this record:');
-    if(!callId)return;
-    clean=callId.replace(/\D/g,'');
-    if(clean.length!==16){showToast('⚠️ Call ID must be exactly 16 digits','error');return;}
-  }
+  // Always prompt for a call ID
+  const callId=prompt('Enter the 16-digit Dialpad Call ID for this record:');
+  if(!callId)return;
+  const clean=callId.replace(/\D/g,'');
+  if(clean.length!==16){showToast('⚠️ Call ID must be exactly 16 digits','error');return;}
   showToast('⏳ Fetching transcript…');
   await sb.from('quality_results').update({dialpad_call_id:clean,processing_status:'fetching_transcript'}).eq('id',qId);
   // Fetch transcript via proxy
@@ -17097,6 +17094,23 @@ async function qAddCallId(qId){
     showToast('⚠️ Fetch failed: '+e.message+'. Please try again.','error');
   }
   setTimeout(()=>renderQualityPage(),2000);
+}
+
+// ── Add additional Call ID to a record (for multi-call leads) ────────────────
+async function qAddMoreCallId(qId){
+  const callId=prompt('Enter an additional 16-digit Dialpad Call ID for this record:');
+  if(!callId)return;
+  const clean=callId.replace(/\D/g,'');
+  if(clean.length!==16){showToast('⚠️ Call ID must be exactly 16 digits','error');return;}
+  const row=(window._qualityRows||[]).find(r=>r.id===qId);
+  const existing=row?.additional_call_ids||[];
+  if(existing.includes(clean)){showToast('⚠️ This Call ID is already added to this record','error');return;}
+  const updated=[...existing,clean];
+  const{error}=await sb.from('quality_results').update({additional_call_ids:updated}).eq('id',qId);
+  if(error){showToast('⚠️ Failed to save additional Call ID','error');return;}
+  if(row) row.additional_call_ids=updated;
+  showToast('✅ Additional Call ID saved ('+updated.length+' total extra IDs)');
+  setTimeout(()=>renderQualityPage(),500);
 }
 
 // ── Reset Call ID and transcript (if wrong call ID was entered) ───────────────
