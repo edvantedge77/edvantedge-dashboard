@@ -16546,26 +16546,20 @@ async function triggerQualityCheck(lead){
     return;
   }
 
-  // Insert pending record immediately
+  // Insert record — always as pending_transcript so the server-side scheduled
+  // function picks it up reliably (runs every 5 min, doesn't depend on browser tab staying open)
   const insertRow={
     lead_id:lead.id, phone, parent_name:parentName, client, region,
     agent_id:agentId, agent_name:agentName,
     quality_status:'Pending',
-    processing_status: dialpadCallId ? 'fetching_transcript' : 'pending_transcript',
+    processing_status:'pending_transcript',
     disposed_at:new Date().toISOString(),
   };
   if(dialpadCallId) insertRow.dialpad_call_id = dialpadCallId;
 
   const {data:qRow,error:qErr}=await sb.from('quality_results').insert(insertRow).select().single();
   if(qErr){ console.warn('quality_results insert error:',qErr); return; }
-  const qId=qRow.id;
-  showToast('📋 Quality check started for '+phone);
-
-  // Run async pipeline (don't await — fire and forget)
-  runQualityPipeline(qId, phone, client, region, agentName, parentName, lead).catch(e=>{
-    console.warn('Quality pipeline error:',e);
-    sb.from('quality_results').update({quality_status:'Error',processing_status:'failed',ai_summary:'Pipeline error: '+e.message}).eq('id',qId).catch(()=>{});
-  });
+  showToast('📋 Quality record created — transcript & score will auto-process within 5 min');
 }
 
 async function runQualityPipeline(qId, phone, client, region, agentName, parentName, lead){
