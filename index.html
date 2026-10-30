@@ -2944,9 +2944,31 @@ async function processImportFile(file){
       toInsert.push(lead);
     });
 
+    // Build the skipped-duplicates CSV + download link up front so it's available
+    // whether or not any new leads ended up being inserted (previously this only
+    // got built further down, after a successful insert — so an all-duplicates
+    // file silently never produced a download link).
+    let dupBlob='';
+    if(duplicates.length){
+      // Include ALL original CSV columns in the skipped file
+      const origHeaders=rows[0];
+      const dupCSV=[
+        [...origHeaders,'Row Number','Skip Reason'].map(v=>'"'+String(v||'').replace(/"/g,'""')+'"').join(','),
+        ...duplicates.map(d=>[
+          ...d.originalRow.map(v=>'"'+String(v||'').replace(/"/g,'""')+'"'),
+          '"'+d.row+'"',
+          '"Duplicate — already in database or repeated in this file"'
+        ].join(','))
+      ].join('\n');
+      const url=URL.createObjectURL(new Blob([dupCSV],{type:'text/csv'}));
+      dupBlob=`<br><a href="${url}" download="blocked_duplicates_${new Date().toISOString().slice(0,10)}.csv"
+        style="display:inline-block;margin-top:8px;padding:7px 14px;background:var(--navy);color:#fff;border-radius:7px;font-size:12px;text-decoration:none;font-weight:600">
+        ⬇ Download ${duplicates.length} Blocked Rows as CSV (Full Data)</a>`;
+    }
+
     if(!toInsert.length){
       res.innerHTML=`<div style="padding:16px;background:#FEF3C7;border-radius:8px;color:#92400E">
-        ⚠️ No new leads. All ${duplicates.length} rows are duplicates${invalid.length?` and ${invalid.length} rows had no phone`:''}.</div>`; return;
+        ⚠️ No new leads. All ${duplicates.length} rows are duplicates${invalid.length?` and ${invalid.length} rows had no phone`:''}.</div>${dupBlob}`; return;
     }
 
     // Test 1 row first to catch schema errors
@@ -2976,24 +2998,6 @@ async function processImportFile(file){
         if(error){errors+=batch.length;batchErrors.push(error.message);}
         else inserted+=batch.length;
       }catch(e){errors+=batch.length;batchErrors.push(e.message);}
-    }
-
-    let dupBlob='';
-    if(duplicates.length){
-      // Include ALL original CSV columns in the skipped file
-      const origHeaders=rows[0];
-      const dupCSV=[
-        [...origHeaders,'Row Number','Skip Reason'].map(v=>'"'+String(v||'').replace(/"/g,'""')+'"').join(','),
-        ...duplicates.map(d=>[
-          ...d.originalRow.map(v=>'"'+String(v||'').replace(/"/g,'""')+'"'),
-          '"'+d.row+'"',
-          '"Duplicate — already in database or repeated in this file"'
-        ].join(','))
-      ].join('\n');
-      const url=URL.createObjectURL(new Blob([dupCSV],{type:'text/csv'}));
-      dupBlob=`<br><a href="${url}" download="blocked_duplicates_${new Date().toISOString().slice(0,10)}.csv"
-        style="display:inline-block;margin-top:8px;padding:7px 14px;background:var(--navy);color:#fff;border-radius:7px;font-size:12px;text-decoration:none;font-weight:600">
-        ⬇ Download ${duplicates.length} Blocked Rows as CSV (Full Data)</a>`;
     }
 
     // Clear All Leads cache so new data appears immediately on next visit
