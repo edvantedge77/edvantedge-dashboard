@@ -16869,25 +16869,26 @@ function renderQualityPage(){
                 ${r.recording_url?`<a href="${h(r.recording_url)}" target="_blank" style="font-size:11px;color:var(--primary);text-decoration:none">🎵 Listen</a>`:'<span style="color:var(--text3);font-size:11px">—</span>'}
               </td>
               <td style="padding:9px 12px;font-size:11px;color:var(--text3)">${date}</td>
-              <td style="padding:9px 12px;text-align:center">
-                <div style="display:flex;gap:4px;justify-content:center;flex-wrap:wrap">
+              <td style="padding:6px 8px;text-align:center">
+                <div style="display:flex;gap:3px;justify-content:center;align-items:center;flex-wrap:nowrap">
                 ${r.processing_status==='scored'||hasDetail
-                  /* SCORED — show View + Add More Call ID + Reset */
-                  ?`<button class="btn btn-sm btn-outline" onclick="showQualityDetail('${r.id}')" style="font-size:11px;padding:3px 10px">👁 View</button>`+
-                   `<button onclick="qAddMoreCallId('${r.id}')" title="Add another Call ID" style="font-size:11px;padding:3px 8px;border-radius:6px;border:1px solid #8e44ad;background:#f5eef8;color:#8e44ad;cursor:pointer">➕ Add Call ID</button>`+
-                   `<button onclick="qResetCallId('${r.id}')" title="Reset record" style="font-size:11px;padding:3px 8px;border-radius:6px;border:1px solid #ccc;background:#f5f5f5;color:#555;cursor:pointer">↺ Reset</button>`
-                  :!r.dialpad_call_id
-                  /* NO CALL ID — show Add Call ID */
-                  ?`<button onclick="qAddCallId('${r.id}')" style="font-size:11px;padding:3px 10px;border-radius:6px;border:1px solid #2471a3;background:#eaf4fb;color:#2471a3;cursor:pointer;font-weight:600">📞 Add Call ID</button>`
+                  /* SCORED: View | +Call ID | Reset */
+                  ?`<button onclick="showQualityDetail('${r.id}')" style="font-size:10px;padding:2px 7px;border-radius:4px;border:1px solid #2471a3;background:#eaf4fb;color:#2471a3;cursor:pointer;font-weight:600;white-space:nowrap">👁 View</button>`+
+                   `<button onclick="qAddMoreCallId('${r.id}')" style="font-size:10px;padding:2px 7px;border-radius:4px;border:1px solid #8e44ad;background:#f5eef8;color:#8e44ad;cursor:pointer;white-space:nowrap">➕ Call ID</button>`+
+                   `<button onclick="qResetCallId('${r.id}')" style="font-size:10px;padding:2px 7px;border-radius:4px;border:1px solid #ccc;background:#f5f5f5;color:#555;cursor:pointer;white-space:nowrap">↺</button>`
                   :r.processing_status==='fetching_transcript'||r.processing_status==='scoring'
-                  /* IN PROGRESS — show spinner + Add More + Reset */
-                  ?`<span style="font-size:11px;color:#f39c12">${r.processing_status==='scoring'?'⚙️ Scoring…':'⏳ Fetching…'}</span>`+
-                   `<button onclick="qAddMoreCallId('${r.id}')" title="Add another Call ID" style="font-size:11px;padding:3px 8px;border-radius:6px;border:1px solid #8e44ad;background:#f5eef8;color:#8e44ad;cursor:pointer">➕ Add Call ID</button>`+
-                   `<button onclick="qResetCallId('${r.id}')" title="Reset if stuck" style="font-size:11px;padding:3px 8px;border-radius:6px;border:1px solid #ccc;background:#f5f5f5;color:#555;cursor:pointer">↺ Reset</button>`
-                  /* HAS CALL ID, NOT YET PROCESSED — show Add Call ID (will trigger fetch) + Add More + Reset */
-                  :`<button onclick="qAddCallId('${r.id}')" style="font-size:11px;padding:3px 10px;border-radius:6px;border:1px solid #2471a3;background:#eaf4fb;color:#2471a3;cursor:pointer;font-weight:600">📞 Add Call ID</button>`+
-                   `<button onclick="qAddMoreCallId('${r.id}')" title="Add another Call ID" style="font-size:11px;padding:3px 8px;border-radius:6px;border:1px solid #8e44ad;background:#f5eef8;color:#8e44ad;cursor:pointer">➕ Add Call ID</button>`+
-                   `<button onclick="qResetCallId('${r.id}')" title="Reset record" style="font-size:11px;padding:3px 8px;border-radius:6px;border:1px solid #ccc;background:#f5f5f5;color:#555;cursor:pointer">↺ Reset</button>`}
+                  /* IN PROGRESS: status | +Call ID | Reset */
+                  ?`<span style="font-size:10px;color:#f39c12;white-space:nowrap">${r.processing_status==='scoring'?'⚙️ Scoring…':'⏳ Fetching…'}</span>`+
+                   `<button onclick="qAddMoreCallId('${r.id}')" style="font-size:10px;padding:2px 7px;border-radius:4px;border:1px solid #8e44ad;background:#f5eef8;color:#8e44ad;cursor:pointer;white-space:nowrap">➕ Call ID</button>`+
+                   `<button onclick="qResetCallId('${r.id}')" style="font-size:10px;padding:2px 7px;border-radius:4px;border:1px solid #ccc;background:#f5f5f5;color:#555;cursor:pointer;white-space:nowrap">↺</button>`
+                  :!r.dialpad_call_id
+                  /* NO CALL ID: Add Call ID only */
+                  ?`<button onclick="qAddCallId('${r.id}')" style="font-size:10px;padding:2px 8px;border-radius:4px;border:1px solid #2471a3;background:#eaf4fb;color:#2471a3;cursor:pointer;font-weight:600;white-space:nowrap">📞 Add Call ID</button>`+
+                   `<button onclick="qResetCallId('${r.id}')" style="font-size:10px;padding:2px 7px;border-radius:4px;border:1px solid #ccc;background:#f5f5f5;color:#555;cursor:pointer;white-space:nowrap">↺</button>`
+                  /* HAS CALL ID, PENDING: Add Call ID | +Call ID | Reset */
+                  :`<button onclick="qAddCallId('${r.id}')" style="font-size:10px;padding:2px 8px;border-radius:4px;border:1px solid #2471a3;background:#eaf4fb;color:#2471a3;cursor:pointer;font-weight:600;white-space:nowrap">📞 Add Call ID</button>`+
+                   `<button onclick="qAddMoreCallId('${r.id}')" style="font-size:10px;padding:2px 7px;border-radius:4px;border:1px solid #8e44ad;background:#f5eef8;color:#8e44ad;cursor:pointer;white-space:nowrap">➕ Call ID</button>`+
+                   `<button onclick="qResetCallId('${r.id}')" style="font-size:10px;padding:2px 7px;border-radius:4px;border:1px solid #ccc;background:#f5f5f5;color:#555;cursor:pointer;white-space:nowrap">↺</button>`}
                 </div>
               </td>
             </tr>`;
