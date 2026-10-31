@@ -6123,7 +6123,9 @@ function renderAgentBookingsView(){
   // Build a pre-filtered set for counts (period + status/client/agent filters but NOT search)
   const ST=['Demo Scheduled','Demo Done','Rescheduled','Did Not Attend','Not Interested','DNC','Cancelled'];
   // Compute period-filtered counts inline using _bkDateKey logic
-  const _dkFn=b=>(b.status==='Demo Done'?(b.demo_date||b.demo_scheduled_date||''):(b.demo_scheduled_date||b.demo_date||''));
+  const _dkFn=b=>(S.bkDateMode==='demo_date'
+    ?(b.demo_date||b.demo_scheduled_date||'')
+    :b.status==='Demo Done'?(b.demo_date||b.demo_scheduled_date||''):(b.demo_scheduled_date||b.demo_date||''));
   const _periodFiltered=bks.filter(b=>{
     const d=_dkFn(b);
     if(bkFrom&&bkFrom!=='2025-01-01'&&(!d||d<bkFrom))return false;
@@ -6149,9 +6151,17 @@ function renderAgentBookingsView(){
   //   falling back to demo_date if blank.
   //   Reason: siblings share same parent phone; each has its own demo_scheduled_date
   //   so both appear when filtering by the month they were booked.
-  const _bkDateKey=b=>(b.status==='Demo Done'
+  // EXCEPTION — calendar month navigation (bkCalGoto, S.bkDateMode==='demo_date'):
+  // the calendar's day badges and the DD Reminder pills both key off demo_date
+  // (the date the demo actually happens), so paging the calendar to e.g.
+  // November must filter the table the same way. Without this, a demo booked
+  // in October for a November date vanished from the table the moment the
+  // calendar moved to November, even though its badge/reminder still showed.
+  const _bkDateKey=b=>(S.bkDateMode==='demo_date'
     ?(b.demo_date||b.demo_scheduled_date||'')
-    :(b.demo_scheduled_date||b.demo_date||''));
+    :b.status==='Demo Done'
+      ?(b.demo_date||b.demo_scheduled_date||'')
+      :(b.demo_scheduled_date||b.demo_date||''));
   if(bkFrom&&bkFrom!=='2025-01-01') filtered=filtered.filter(b=>{const d=_bkDateKey(b);return d&&d>=bkFrom;});
   if(bkTo&&bkTo!=='2030-12-31') filtered=filtered.filter(b=>{const d=_bkDateKey(b);return d&&d<=bkTo;});
   // periodBks: respects ONLY the date-range period bar (Today/Week/MTD/All Time
@@ -6632,6 +6642,10 @@ function bkSetPeriod(m){
   // Clear the calendar demoDate filter — period buttons and calendar clicks
   // must not combine (would silently double-filter and show wrong totals)
   if(S.bkFilter) S.bkFilter.demoDate='';
+  // These period buttons intentionally key off demo_scheduled_date (when the
+  // booking was made) for non-Demo-Done rows — switch back to that mode in
+  // case the calendar's "filter by demo_date" mode (see bkCalGoto) was on.
+  S.bkDateMode='created';
   S.bkPage=0;
   render();
 }
@@ -6643,11 +6657,17 @@ function bkSetCurrentMonth(){
   S.bkCalY=y; S.bkCalM=m;
   S.bkFrom=y+'-'+String(m+1).padStart(2,'0')+'-01';
   S.bkTo=y+'-'+String(m+1).padStart(2,'0')+'-'+String(new Date(y,m+1,0).getDate()).padStart(2,'0');
+  S.bkDateMode='demo_date';
   S.bkPage=0;
 }
 
 // ── bkCalGoto — move the booking calendar forward/backward a month, and sync
 //     the whole Bookings view (table, stats, cards) to that month's range ─────
+// Filters by demo_date (S.bkDateMode='demo_date') so the table matches what
+// the calendar day badges and DD Reminder pills show for that month — not
+// demo_scheduled_date (when the booking was made), which could fall in a
+// different month entirely and made the table look empty after paging
+// forward even though demos were genuinely scheduled for that month.
 function bkCalGoto(dir){
   const now=new Date();
   let y=S.bkCalY||now.getFullYear();
@@ -6658,6 +6678,7 @@ function bkCalGoto(dir){
   const mEnd=new Date(y,m+1,0).getDate();
   const mTo=y+'-'+String(m+1).padStart(2,'0')+'-'+String(mEnd).padStart(2,'0');
   S.bkFrom=mStart; S.bkTo=mTo;
+  S.bkDateMode='demo_date';
   if(S.bkFilter) delete S.bkFilter.demoDate;
   S.bkPage=0;
   render();
@@ -7638,7 +7659,10 @@ function bkExportCSV(){
   // Start from clean records (no junk rows) — same base as UI display
   let src=(_bkBookings||[]).filter(b=>b.agent!=='2026'&&b.agent!=='2025'&&(!b.client||!b.client.startsWith('http')));
   // Apply same date-key logic as UI: Demo Done → demo_date, others → demo_scheduled_date
-  const _dk=b=>b.status==='Demo Done'?(b.demo_date||b.demo_scheduled_date||''):(b.demo_scheduled_date||b.demo_date||'');
+  // (unless the calendar's demo_date filter mode is active — see bkCalGoto)
+  const _dk=b=>S.bkDateMode==='demo_date'
+    ?(b.demo_date||b.demo_scheduled_date||'')
+    :b.status==='Demo Done'?(b.demo_date||b.demo_scheduled_date||''):(b.demo_scheduled_date||b.demo_date||'');
   if(bkFrom!=='2025-01-01') src=src.filter(b=>{const d=_dk(b);return d&&d>=bkFrom;});
   if(bkTo!=='2030-12-31')   src=src.filter(b=>{const d=_dk(b);return d&&d<=bkTo;});
   if(bf.disp==='_today') src=src.filter(b=>b.demo_date===todayStr);
