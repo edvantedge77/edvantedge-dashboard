@@ -16615,9 +16615,15 @@ async function triggerQualityCheck(lead){
 
   // Insert record — always as pending_transcript so the server-side scheduled
   // function picks it up reliably (runs every 5 min, doesn't depend on browser tab staying open)
+  // quality_results.agent_id is a UUID column, but CRM agent ids are text like
+  // 'u_hena'. Sending those made EVERY insert fail with HTTP 400 (22P02) from
+  // 1 Nov 2026, so no quality records were created at all. The Quality page and
+  // scheduled function identify agents by agent_name, so only send agent_id
+  // when it really is a UUID, otherwise leave it null.
+  const _isUuid=v=>/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(v||''));
   const insertRow={
     lead_id:lead.id, phone, parent_name:parentName, client, region,
-    agent_id:agentId, agent_name:agentName,
+    agent_id:_isUuid(agentId)?agentId:null, agent_name:agentName,
     quality_status:'Pending',
     processing_status:'pending_transcript',
     disposed_at:new Date().toISOString(),
@@ -16625,7 +16631,13 @@ async function triggerQualityCheck(lead){
   if(dialpadCallId) insertRow.dialpad_call_id = dialpadCallId;
 
   const {data:qRow,error:qErr}=await sb.from('quality_results').insert(insertRow).select().single();
-  if(qErr){ console.warn('quality_results insert error:',qErr); return; }
+  if(qErr){
+    console.warn('quality_results insert error:',qErr);
+    // The database trigger (trg_auto_quality_record) also creates this record, so
+    // it will normally still appear — but never fail silently again.
+    showToast('⚠️ Quality record issue: '+(qErr.message||'insert failed')+' — it will be created automatically if missing','error');
+    return;
+  }
   showToast('📋 Quality record created — transcript & score will auto-process within 5 min');
 }
 
@@ -16782,6 +16794,25 @@ async function scoreQualityRecord(qId){
 // ═══════════════════════════════════════════════════════════════════════════
 // Persisted quality filter state — survives re-renders triggered by actions
 window._qFilterState = window._qFilterState || {};
+// ── Quality month navigation ─────────────────────────────────────────────────
+function _qDateStr(y,m,d){return y+'-'+String(m+1).padStart(2,'0')+'-'+String(d).padStart(2,'0');}
+function _qMonthSel(){
+  const n=new Date();
+  const q=window._qMonth;
+  return (q&&typeof q.y==='number'&&typeof q.m==='number')?q:{y:n.getFullYear(),m:n.getMonth()};
+}
+function qMonthGoto(dir){
+  const n=new Date();
+  const cur=_qMonthSel();
+  let y=cur.y,m=cur.m+dir;
+  if(m<0){m=11;y--;}else if(m>11){m=0;y++;}
+  // Don't go past the current month (nothing exists in the future)
+  if(y>n.getFullYear()||(y===n.getFullYear()&&m>n.getMonth())) return;
+  window._qMonth={y,m};
+  // Drop the saved date filters so the new month's own range is used
+  if(window._qFilterState){delete window._qFilterState['q-filter-date-from'];delete window._qFilterState['q-filter-date-to'];}
+  goPage('quality');
+}
 function _qSaveFilters(){
   const ids=['q-filter-agent','q-filter-phone','q-filter-parent','q-filter-client','q-filter-country','q-filter-status','q-filter-date-from','q-filter-date-to'];
   ids.forEach(id=>{const el=document.getElementById(id);if(el)window._qFilterState[id]=el.value;});
@@ -16803,8 +16834,15 @@ function renderQualityPage(){
     const isAdm=isInternalAdmin();
     // Default to current month
     const now=new Date();
-    const monthStart=new Date(now.getFullYear(),now.getMonth(),1).toISOString().slice(0,10);
-    const monthEnd=new Date(now.getFullYear(),now.getMonth()+1,0).toISOString().slice(0,10);
+    // Month shown on the Quality page (‹ › arrows). Dates are built from local
+    // parts — toISOString() shifted them back a day in IST (1 Nov showed as 31 Oct,
+    // and the 30th/31st were missing from the month-end).
+    const _qm=_qMonthSel();
+    const monthStart=_qDateStr(_qm.y,_qm.m,1);
+    const monthEnd=_qDateStr(_qm.y,_qm.m,new Date(_qm.y,_qm.m+1,0).getDate());
+    const _qIsCurMonth=(_qm.y===now.getFullYear()&&_qm.m===now.getMonth());
+    const _qDateToDefault=_qIsCurMonth?_qDateStr(now.getFullYear(),now.getMonth(),now.getDate()):monthEnd;
+    const _qMonthLbl=new Date(_qm.y,_qm.m,1).toLocaleDateString('en-US',{month:'long',year:'numeric'});
     const qCols='id,lead_id,agent_name,phone,parent_name,client,region,quality_status,score,weighted_score,ai_summary,processing_status,dialpad_call_id,additional_call_ids,disposed_at,scored_at,recording_url,parameters_detail';
     let q=sb.from('quality_results').select(qCols).gte('disposed_at',monthStart).lte('disposed_at',monthEnd+'T23:59:59').order('disposed_at',{ascending:false});
     if(!isAdm){const agentMatch=(S.user.name||S.user.username||'').trim();if(!agentMatch){el.innerHTML='<div style="padding:2rem;color:var(--red)">⚠️ Could not identify your agent profile. Please log out and log back in.</div>';return;}q=q.ilike('agent_name',agentMatch);}
@@ -16831,6 +16869,11 @@ function renderQualityPage(){
     <div class="card">
       <div class="card-hdr">
         <div class="card-title">Call Quality Results</div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <button onclick="qMonthGoto(-1)" title="Previous month" style="width:26px;height:26px;border-radius:5px;border:1px solid #e2e6ed;background:#fff;cursor:pointer;font-size:14px;display:flex;align-items:center;justify-content:center">&#x2039;</button>
+          <span style="font-size:13px;font-weight:700;min-width:120px;text-align:center">${_qMonthLbl}</span>
+          <button onclick="qMonthGoto(1)" title="Next month" ${_qIsCurMonth?'disabled':''} style="width:26px;height:26px;border-radius:5px;border:1px solid #e2e6ed;background:#fff;cursor:${_qIsCurMonth?'not-allowed':'pointer'};opacity:${_qIsCurMonth?'.4':'1'};font-size:14px;display:flex;align-items:center;justify-content:center">&#x203a;</button>
+        </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
           ${isAdm?`<select id="q-filter-agent" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px" onchange="qFilterRows()"><option value="">All Agents</option>${(S.users||[]).filter(u=>u.role==='agent'||u.role==='team_lead').sort((a,b)=>(a.name||'').localeCompare(b.name||'')).map(u=>`<option value="${(u.name||'').toLowerCase()}">${u.name||u.username}</option>`).join('')}</select>`:``}
           <input id="q-filter-phone" type="text" placeholder="🔍 Phone" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;width:130px" oninput="qFilterRows()">
@@ -16844,7 +16887,7 @@ function renderQualityPage(){
             <option value="uk">UK</option><option value="us">US</option><option value="aus">AUS</option><option value="india">India</option>
           </select>
           <input id="q-filter-date-from" type="date" value="${monthStart}" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px" onchange="qFilterRows()">
-          <input id="q-filter-date-to" type="date" value="${now.toISOString().slice(0,10)}" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px" onchange="qFilterRows()">
+          <input id="q-filter-date-to" type="date" value="${_qDateToDefault}" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px" onchange="qFilterRows()">
           <select id="q-filter-status" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px" onchange="qFilterRows()">
             <option value="">All Status</option>
             <option>Valid</option><option>Invalid</option><option>Manual Review</option><option>Pending</option>
@@ -17331,8 +17374,9 @@ function qClearFilters(){
   });
   // Reset dates to current month (not blank)
   const _now=new Date();
-  const _ms=new Date(_now.getFullYear(),_now.getMonth(),1).toISOString().slice(0,10);
-  const _me=_now.toISOString().slice(0,10);
+  const _sm=_qMonthSel();
+  const _ms=_qDateStr(_sm.y,_sm.m,1);
+  const _me=(_sm.y===_now.getFullYear()&&_sm.m===_now.getMonth())?_qDateStr(_now.getFullYear(),_now.getMonth(),_now.getDate()):_qDateStr(_sm.y,_sm.m,new Date(_sm.y,_sm.m+1,0).getDate());
   const _df=document.getElementById('q-filter-date-from');if(_df)_df.value=_ms;
   const _dt=document.getElementById('q-filter-date-to');if(_dt)_dt.value=_me;
   qFilterRows();
