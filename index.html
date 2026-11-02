@@ -16801,6 +16801,25 @@ function _qMonthSel(){
   const q=window._qMonth;
   return (q&&typeof q.y==='number'&&typeof q.m==='number')?q:{y:n.getFullYear(),m:n.getMonth()};
 }
+function _qLocalDate(iso){
+  const d=new Date(iso);
+  if(isNaN(d)) return String(iso||'').slice(0,10);
+  return _qDateStr(d.getFullYear(),d.getMonth(),d.getDate());
+}
+// From/To boxes changed: load that exact period from the database.
+function qDateChanged(){
+  const f=document.getElementById('q-filter-date-from')?.value||'';
+  const t=document.getElementById('q-filter-date-to')?.value||'';
+  if(f&&t&&f>t){showToast('From date is after To date','error');return;}
+  const m=_qMonthSel();
+  const from=f||_qDateStr(m.y,m.m,1);
+  const to=t||_qDateStr(m.y,m.m,new Date(m.y,m.m+1,0).getDate());
+  window._qRange={from,to};
+  // keep the ‹ › arrows moving from the month the user is looking at
+  const fy=parseInt(from.slice(0,4),10), fm=parseInt(from.slice(5,7),10)-1;
+  if(!isNaN(fy)&&!isNaN(fm)) window._qMonth={y:fy,m:fm};
+  goPage('quality');
+}
 function qMonthGoto(dir){
   const n=new Date();
   const cur=_qMonthSel();
@@ -16809,13 +16828,18 @@ function qMonthGoto(dir){
   // Don't go past the current month (nothing exists in the future)
   if(y>n.getFullYear()||(y===n.getFullYear()&&m>n.getMonth())) return;
   window._qMonth={y,m};
+  window._qRange=null;   // arrows always show the whole month
+  window._qResetDates=true;
   // Drop the saved date filters so the new month's own range is used
   if(window._qFilterState){delete window._qFilterState['q-filter-date-from'];delete window._qFilterState['q-filter-date-to'];}
   goPage('quality');
 }
 function _qSaveFilters(){
   const ids=['q-filter-agent','q-filter-phone','q-filter-parent','q-filter-client','q-filter-country','q-filter-status','q-filter-date-from','q-filter-date-to'];
-  ids.forEach(id=>{const el=document.getElementById(id);if(el)window._qFilterState[id]=el.value;});
+  // After a month-arrow click or Clear, the old date boxes must NOT be saved back —
+  // that carried the previous month's dates over and hid every row of the new month.
+  const _skipDates=!!window._qResetDates; window._qResetDates=false;
+  ids.forEach(id=>{if(_skipDates&&id.indexOf('date')>=0)return;const el=document.getElementById(id);if(el)window._qFilterState[id]=el.value;});
 }
 function _qRestoreFilters(){
   Object.entries(window._qFilterState||{}).forEach(([id,val])=>{
@@ -16842,9 +16866,18 @@ function renderQualityPage(){
     const monthEnd=_qDateStr(_qm.y,_qm.m,new Date(_qm.y,_qm.m+1,0).getDate());
     const _qIsCurMonth=(_qm.y===now.getFullYear()&&_qm.m===now.getMonth());
     const _qDateToDefault=_qIsCurMonth?_qDateStr(now.getFullYear(),now.getMonth(),now.getDate()):monthEnd;
-    const _qMonthLbl=new Date(_qm.y,_qm.m,1).toLocaleDateString('en-US',{month:'long',year:'numeric'});
+    const _qMonthLbl=window._qRange
+      ?(window._qRange.from+' → '+window._qRange.to)
+      :new Date(_qm.y,_qm.m,1).toLocaleDateString('en-US',{month:'long',year:'numeric'});
+    // Custom range picked with the From/To boxes (loads from the database, not just
+    // hides rows already loaded for the month). Local-day bounds so IST days are right.
+    const _qr=window._qRange||null;
+    const _qLoadFrom=_qr?_qr.from:monthStart;
+    const _qLoadTo=_qr?_qr.to:monthEnd;
+    const _qFromTs=new Date(_qLoadFrom+'T00:00:00').toISOString();
+    const _qToTs=new Date(_qLoadTo+'T23:59:59.999').toISOString();
     const qCols='id,lead_id,agent_name,phone,parent_name,client,region,quality_status,score,weighted_score,ai_summary,processing_status,dialpad_call_id,additional_call_ids,disposed_at,scored_at,recording_url,parameters_detail';
-    let q=sb.from('quality_results').select(qCols).gte('disposed_at',monthStart).lte('disposed_at',monthEnd+'T23:59:59').order('disposed_at',{ascending:false});
+    let q=sb.from('quality_results').select(qCols).gte('disposed_at',_qFromTs).lte('disposed_at',_qToTs).order('disposed_at',{ascending:false});
     if(!isAdm){const agentMatch=(S.user.name||S.user.username||'').trim();if(!agentMatch){el.innerHTML='<div style="padding:2rem;color:var(--red)">⚠️ Could not identify your agent profile. Please log out and log back in.</div>';return;}q=q.ilike('agent_name',agentMatch);}
     else if(isPartnerAdmin()){const scopedNames=(getScopedAgentIds()||[]).map(id=>(S.users||[]).find(u=>u.id===id)?.name).filter(Boolean);if(scopedNames.length){q=q.in('agent_name',scopedNames);}}
     // Fetch all records in pages to avoid Supabase 1000-row default cap
@@ -16886,8 +16919,8 @@ function renderQualityPage(){
             <option value="">All Countries</option>
             <option value="uk">UK</option><option value="us">US</option><option value="aus">AUS</option><option value="india">India</option>
           </select>
-          <input id="q-filter-date-from" type="date" value="${monthStart}" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px" onchange="qFilterRows()">
-          <input id="q-filter-date-to" type="date" value="${_qDateToDefault}" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px" onchange="qFilterRows()">
+          <input id="q-filter-date-from" type="date" value="${_qr?_qr.from:monthStart}" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px" onchange="qDateChanged()">
+          <input id="q-filter-date-to" type="date" value="${_qr?_qr.to:_qDateToDefault}" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px" onchange="qDateChanged()">
           <select id="q-filter-status" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px" onchange="qFilterRows()">
             <option value="">All Status</option>
             <option>Valid</option><option>Invalid</option><option>Manual Review</option><option>Pending</option>
@@ -16920,7 +16953,7 @@ function renderQualityPage(){
             const date=r.disposed_at?new Date(r.disposed_at).toLocaleDateString('en-IN',{day:'2-digit',month:'short'}):'—';
             const summary=r.ai_summary?r.ai_summary.slice(0,80)+(r.ai_summary.length>80?'…':''):'—';
             const _qs=(r.quality_status||'').toLowerCase().trim();const _ps=(r.processing_status||'').toLowerCase().trim();const hasDetail=((_ps==='complete')||r.parameters_detail||(r.ai_summary&&r.ai_summary!=='Awaiting Call ID'&&!r.ai_summary.startsWith('Reset by')))&&_ps!=='pending_transcript'&&_qs!=='pending';
-            const rowDate=r.disposed_at?r.disposed_at.slice(0,10):'';
+            const rowDate=r.disposed_at?_qLocalDate(r.disposed_at):'';
             // Normalize phone for display and search: ensure leading + and correct country code
             const _rawPhone=(r.phone||r.phone_number||'').trim();
             const _normPhone=(()=>{
@@ -17130,7 +17163,7 @@ function _qPatchTable(rec,action){
     const labels={'pending_transcript':'Awaiting Call ID','fetching_transcript':'Fetching…','transcript_ready':'Ready','scoring':'Scoring…','scored':'Scored','transcript_error':'Fetch Error','scoring_error':'Score Error'};
     return`<span style="font-size:0.78rem;color:var(--text3)">${labels[ps]||ps||''}</span>`;
   };
-  const dt=rec.disposed_at?rec.disposed_at.slice(0,10):'';
+  const dt=rec.disposed_at?_qLocalDate(rec.disposed_at):'';
   const sc=rec.weighted_score||rec.score||'—';
   const callIds=[rec.dialpad_call_id,...(rec.additional_call_ids||[])].filter(Boolean).join(', ')||'—';
   const rowId='qrow-'+rec.id;
@@ -17369,6 +17402,17 @@ function qFilterRows(){
 function qClearFilters(){
   // Clear persisted filter state so next re-render doesn't re-apply old values
   window._qFilterState={};
+  const _hadRange=!!window._qRange;
+  const _n=new Date(), _sel=_qMonthSel();
+  const _offCurrent=(_sel.y!==_n.getFullYear()||_sel.m!==_n.getMonth());
+  window._qRange=null;
+  if(_hadRange||_offCurrent){
+    // go back to the current month and reload it
+    window._qMonth=null;
+    window._qResetDates=true;
+    goPage('quality');
+    return;
+  }
   ['q-filter-agent','q-filter-phone','q-filter-parent','q-filter-client','q-filter-country','q-filter-status'].forEach(id=>{
     const el=document.getElementById(id); if(el) el.value='';
   });

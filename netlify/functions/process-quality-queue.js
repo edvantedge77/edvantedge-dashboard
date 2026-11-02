@@ -48,20 +48,48 @@ function sbHeaders(){
 }
 
 // ── Dialpad transcript fetch ───────────────────────────────────────────────────
+// Turn Dialpad transcript segments into "Speaker: text" lines (same parsing as dialpad-proxy.js)
+function parseSegments(arr){
+  return arr
+    .filter(seg => seg && (seg.type === 'transcript' || seg.content || seg.text))
+    .map(seg => {
+      const speaker = seg.name || seg.speaker_name || seg.speaker || 'Speaker';
+      const content = seg.content || seg.text || '';
+      return `${speaker}: ${content}`;
+    })
+    .join('\n');
+}
+
 async function fetchTranscript(callId){
-  // Use the same dialpad-proxy flow already in production
-  // (re-implement inline to avoid Netlify function-to-function HTTP call latency issues)
-  const url = `https://dialpad.com/api/v2/call/${callId}`;
+  // IMPORTANT: the transcript lives at /transcripts/{call_id}. The /call/{id}
+  // endpoint only returns call metadata (no transcript), which is why every
+  // record used to sit on "Fetching transcript" forever and was never scored.
+  // This is the same endpoint dialpad-proxy.js (manual Call ID button) uses.
+  const url = `https://dialpad.com/api/v2/transcripts/${encodeURIComponent(callId)}`;
   const r = await fetch(url, {
     headers: { 'Authorization': `Bearer ${DIALPAD_KEY}`, 'Accept': 'application/json' }
   });
+  // 404 = Dialpad hasn't produced the transcript yet, 429 = rate limited.
+  // Neither is an error — keep the record queued and retry next cycle.
+  if(r.status === 404 || r.status === 425 || r.status === 429){
+    return { transcript: '', notReady: true, status: r.status };
+  }
   if(!r.ok){
     const txt = await r.text();
     throw new Error(`Dialpad ${r.status}: ${txt.slice(0,200)}`);
   }
-  const data = await r.json();
-  // Transcript may be in data.transcription.transcript or data.transcript
-  const tx = data?.transcription?.transcript || data?.transcript || '';
+  const text = await r.text();
+  let data;
+  try { data = JSON.parse(text); } catch { data = { raw: text }; }
+
+  let tx = '';
+  if(Array.isArray(data))                    tx = parseSegments(data);
+  else if(typeof data.transcript === 'string') tx = data.transcript;
+  else if(Array.isArray(data.transcript))    tx = parseSegments(data.transcript);
+  else if(Array.isArray(data.items))         tx = parseSegments(data.items);
+  else if(Array.isArray(data.lines))         tx = parseSegments(data.lines);
+  else if(typeof data.content === 'string')  tx = data.content;
+  else if(typeof data?.transcription?.transcript === 'string') tx = data.transcription.transcript;
   return { transcript: tx, raw: data };
 }
 
@@ -151,7 +179,7 @@ exports.handler = async (event) => {
         console.warn(`[queue] Empty transcript for ${id} — Dialpad may still be processing`);
         await sbUpdate('quality_results', id, {
           processing_status: 'fetching_transcript',
-          ai_summary: '[Auto-queue] Transcript not yet available in Dialpad — will retry next cycle.',
+          ai_summary: '[Auto-queue] Transcript not ready in Dialpad yet — retrying automatically every 5 min.',
           last_queue_attempt: new Date().toISOString()
         });
         results.push({ id, status: 'empty_transcript' });
