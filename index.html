@@ -554,7 +554,7 @@ tr:last-child td{border-bottom:none;}tr:hover td{background:#fafafa;cursor:point
 // login screen and logged to the console, so a quick hard refresh + glance
 // tells him definitively whether Netlify is actually serving THIS file yet,
 // instead of guessing at whether a reported bug was ever really fixed.
-const BUILD_STAMP='2026-10-01-earnings-exclude-transcar';
+const BUILD_STAMP='2026-11-02-nov-month-rollover';
 console.log('[EdvantEdge CRM] build', BUILD_STAMP);
 const SB_URL='https://qyubbieikviesfcorusq.supabase.co';
 const SB_KEY=['eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF5','dWJiaWVpa3ZpZXNmY29ydXNxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU0OTkzNjEsImV4cCI6MjA5MTA3NTM2MX0.t_4mZWd_Qo1KHrGN9imMnnpn6UkLtLFrOeI2Q9lPD08'].join('');
@@ -5419,6 +5419,7 @@ const CLIENT_HISTORY={
   '2026-08':['Codyoung','Codingal','Turito','Vedantu'],
   '2026-09':['Codyoung','Codingal','Turito','Vedantu','Edvantedge','JustTutor'],
   '2026-10':['Codyoung','Codingal','Turito','Vedantu','Edvantedge','JustTutor'],
+  '2026-11':['Codyoung','Codingal','Turito','Vedantu','Edvantedge','JustTutor'],
 };
 // Returns the active client list for a given 'YYYY-MM' string.
 // Falls back to the most recent configured month if the key isn't found.
@@ -11891,6 +11892,18 @@ const PERF_AGENT_CFG_BY_MONTH = {
     HAJIRA: {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge']},
     CLARA:  {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge']},
   },
+  '2026-11': {
+    GALVIN: {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge']},
+    HEENA:  {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge']},
+    EKTA:   {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge']},
+    MARY:   {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge']},
+    NEEDA:  {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge']},
+    AHIMA:  {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge']},
+    EVA:    {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge']},
+    SHAHID: {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge']},
+    HAJIRA: {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge']},
+    CLARA:  {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge']},
+  },
 };
 // Falls back to the most recently defined month's roster (not a hardcoded old
 // one), so a month nobody has explicitly configured yet still shows the
@@ -11958,6 +11971,8 @@ const CLIENT_CFG_DASH_BY_MONTH = {
   '2026-06': [{n:'Flyingstars',t:'DS',color:'#00956E'},{n:'Codyoung',t:'DS',color:'#00956E'},{n:'Codingal',t:'DD',color:'#7D3C98'},{n:'Connect2Learn',t:'DD',color:'#7D3C98'}],
   '2026-07': [{n:'Codyoung',t:'DS',color:'#00956E'},{n:'Codingal',t:'DD',color:'#7D3C98'},{n:'Turito',t:'DD',color:'#C97F00'},{n:'Vedantu',t:'DD',color:'#1F618D'},{n:'Edvantedge',t:'DD',color:'#16A085'}],
   '2026-09': [{n:'Codyoung',t:'DS',color:'#00956E'},{n:'Codingal',t:'DD',color:'#7D3C98'},{n:'Turito',t:'DD',color:'#C97F00'},{n:'Vedantu',t:'DD',color:'#1F618D'},{n:'JustTutor',t:'DD',color:'#8E44AD'},{n:'Edvantedge',t:'DD',color:'#16A085'}],
+  '2026-10': [{n:'Codyoung',t:'DS',color:'#00956E'},{n:'Codingal',t:'DD',color:'#7D3C98'},{n:'Turito',t:'DD',color:'#C97F00'},{n:'Vedantu',t:'DD',color:'#1F618D'},{n:'JustTutor',t:'DD',color:'#8E44AD'},{n:'Edvantedge',t:'DD',color:'#16A085'}],
+  '2026-11': [{n:'Codyoung',t:'DS',color:'#00956E'},{n:'Codingal',t:'DD',color:'#7D3C98'},{n:'Turito',t:'DD',color:'#C97F00'},{n:'Vedantu',t:'DD',color:'#1F618D'},{n:'JustTutor',t:'DD',color:'#8E44AD'},{n:'Edvantedge',t:'DD',color:'#16A085'}],
 };
 function getClientCfgDash(){ return CLIENT_CFG_DASH_BY_MONTH[PERF_MONTH]||CLIENT_CFG_DASH_BY_MONTH['2026-07']; }
 const CLIENT_CFG_DASH = new Proxy([],{get(_,k){ const a=getClientCfgDash(); return k==='length'?a.length:k in a?a[k]:a[k]; }});
@@ -12034,6 +12049,30 @@ const AG_CLIENT_CFG_BY_MONTH = {
     'CLARA':   [{n:'Codyoung',t:'DS'},{n:'Codingal',t:'DD'},{n:'Turito',t:'DD'},{n:'Vedantu',t:'DD'},{n:'JustTutor',t:'DD'},{n:'Edvantedge',t:'DD'}],
     'FARDEEN': [{n:'Codyoung',t:'DS'},{n:'Codingal',t:'DD'},{n:'Turito',t:'DD'},{n:'Vedantu',t:'DD'},{n:'JustTutor',t:'DD'},{n:'Edvantedge',t:'DD'}],
     'RUHI':    [{n:'Codyoung',t:'DS'},{n:'Codingal',t:'DD'},{n:'Turito',t:'DD'},{n:'Vedantu',t:'DD'},{n:'JustTutor',t:'DD'},{n:'Edvantedge',t:'DD'}],
+  },
+  '2026-10': {
+    'GALVIN': [{n:'Codyoung',t:'DS'},{n:'Codingal',t:'DD'},{n:'Turito',t:'DD'},{n:'Vedantu',t:'DD'},{n:'JustTutor',t:'DD'},{n:'Edvantedge',t:'DD'}],
+    'HEENA': [{n:'Codyoung',t:'DS'},{n:'Codingal',t:'DD'},{n:'Turito',t:'DD'},{n:'Vedantu',t:'DD'},{n:'JustTutor',t:'DD'},{n:'Edvantedge',t:'DD'}],
+    'EKTA': [{n:'Codyoung',t:'DS'},{n:'Codingal',t:'DD'},{n:'Turito',t:'DD'},{n:'Vedantu',t:'DD'},{n:'JustTutor',t:'DD'},{n:'Edvantedge',t:'DD'}],
+    'MARY': [{n:'Codyoung',t:'DS'},{n:'Codingal',t:'DD'},{n:'Turito',t:'DD'},{n:'Vedantu',t:'DD'},{n:'JustTutor',t:'DD'},{n:'Edvantedge',t:'DD'}],
+    'NEEDA': [{n:'Codyoung',t:'DS'},{n:'Codingal',t:'DD'},{n:'Turito',t:'DD'},{n:'Vedantu',t:'DD'},{n:'JustTutor',t:'DD'},{n:'Edvantedge',t:'DD'}],
+    'AHIMA': [{n:'Codyoung',t:'DS'},{n:'Codingal',t:'DD'},{n:'Turito',t:'DD'},{n:'Vedantu',t:'DD'},{n:'JustTutor',t:'DD'},{n:'Edvantedge',t:'DD'}],
+    'EVA': [{n:'Codyoung',t:'DS'},{n:'Codingal',t:'DD'},{n:'Turito',t:'DD'},{n:'Vedantu',t:'DD'},{n:'JustTutor',t:'DD'},{n:'Edvantedge',t:'DD'}],
+    'SHAHID': [{n:'Codyoung',t:'DS'},{n:'Codingal',t:'DD'},{n:'Turito',t:'DD'},{n:'Vedantu',t:'DD'},{n:'JustTutor',t:'DD'},{n:'Edvantedge',t:'DD'}],
+    'HAJIRA': [{n:'Codyoung',t:'DS'},{n:'Codingal',t:'DD'},{n:'Turito',t:'DD'},{n:'Vedantu',t:'DD'},{n:'JustTutor',t:'DD'},{n:'Edvantedge',t:'DD'}],
+    'CLARA': [{n:'Codyoung',t:'DS'},{n:'Codingal',t:'DD'},{n:'Turito',t:'DD'},{n:'Vedantu',t:'DD'},{n:'JustTutor',t:'DD'},{n:'Edvantedge',t:'DD'}],
+  },
+  '2026-11': {
+    'GALVIN': [{n:'Codyoung',t:'DS'},{n:'Codingal',t:'DD'},{n:'Turito',t:'DD'},{n:'Vedantu',t:'DD'},{n:'JustTutor',t:'DD'},{n:'Edvantedge',t:'DD'}],
+    'HEENA': [{n:'Codyoung',t:'DS'},{n:'Codingal',t:'DD'},{n:'Turito',t:'DD'},{n:'Vedantu',t:'DD'},{n:'JustTutor',t:'DD'},{n:'Edvantedge',t:'DD'}],
+    'EKTA': [{n:'Codyoung',t:'DS'},{n:'Codingal',t:'DD'},{n:'Turito',t:'DD'},{n:'Vedantu',t:'DD'},{n:'JustTutor',t:'DD'},{n:'Edvantedge',t:'DD'}],
+    'MARY': [{n:'Codyoung',t:'DS'},{n:'Codingal',t:'DD'},{n:'Turito',t:'DD'},{n:'Vedantu',t:'DD'},{n:'JustTutor',t:'DD'},{n:'Edvantedge',t:'DD'}],
+    'NEEDA': [{n:'Codyoung',t:'DS'},{n:'Codingal',t:'DD'},{n:'Turito',t:'DD'},{n:'Vedantu',t:'DD'},{n:'JustTutor',t:'DD'},{n:'Edvantedge',t:'DD'}],
+    'AHIMA': [{n:'Codyoung',t:'DS'},{n:'Codingal',t:'DD'},{n:'Turito',t:'DD'},{n:'Vedantu',t:'DD'},{n:'JustTutor',t:'DD'},{n:'Edvantedge',t:'DD'}],
+    'EVA': [{n:'Codyoung',t:'DS'},{n:'Codingal',t:'DD'},{n:'Turito',t:'DD'},{n:'Vedantu',t:'DD'},{n:'JustTutor',t:'DD'},{n:'Edvantedge',t:'DD'}],
+    'SHAHID': [{n:'Codyoung',t:'DS'},{n:'Codingal',t:'DD'},{n:'Turito',t:'DD'},{n:'Vedantu',t:'DD'},{n:'JustTutor',t:'DD'},{n:'Edvantedge',t:'DD'}],
+    'HAJIRA': [{n:'Codyoung',t:'DS'},{n:'Codingal',t:'DD'},{n:'Turito',t:'DD'},{n:'Vedantu',t:'DD'},{n:'JustTutor',t:'DD'},{n:'Edvantedge',t:'DD'}],
+    'CLARA': [{n:'Codyoung',t:'DS'},{n:'Codingal',t:'DD'},{n:'Turito',t:'DD'},{n:'Vedantu',t:'DD'},{n:'JustTutor',t:'DD'},{n:'Edvantedge',t:'DD'}],
   },
 };
 // Falls back to the most recently defined month, not a hardcoded old one — see
