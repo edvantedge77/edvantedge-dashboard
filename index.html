@@ -554,7 +554,7 @@ tr:last-child td{border-bottom:none;}tr:hover td{background:#fafafa;cursor:point
 // login screen and logged to the console, so a quick hard refresh + glance
 // tells him definitively whether Netlify is actually serving THIS file yet,
 // instead of guessing at whether a reported bug was ever really fixed.
-const BUILD_STAMP='2026-11-02-nov-month-rollover';
+const BUILD_STAMP='2026-11-02-manual-fetch';
 console.log('[EdvantEdge CRM] build', BUILD_STAMP);
 const SB_URL='https://qyubbieikviesfcorusq.supabase.co';
 const SB_KEY=['eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF5','dWJiaWVpa3ZpZXNmY29ydXNxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU0OTkzNjEsImV4cCI6MjA5MTA3NTM2MX0.t_4mZWd_Qo1KHrGN9imMnnpn6UkLtLFrOeI2Q9lPD08'].join('');
@@ -16761,7 +16761,13 @@ async function scoreQualityRecord(qId){
       call_metadata:{agent_name:agentName, parent_name:parentName, region, call_date:new Date().toLocaleDateString('en-IN')}
     })
   });
-  const scoring=await scoreR.json();
+  let scoring={};
+  try{scoring=await scoreR.json();}catch(e){scoring={error:'Invalid scoring response'};}
+  if(!scoreR.ok||scoring.error||(scoring.overall_score==null&&scoring.weighted_score==null)){
+    const em=scoring.error||('Scoring service error '+scoreR.status);
+    await sb.from('quality_results').update({processing_status:'scoring_error',ai_summary:'Scoring failed: '+em+' — click Fetch to retry'}).eq('id',qId);
+    throw new Error(em);
+  }
 
   // Map new scoring format to DB columns
   const overallStatus=scoring.overall_status||'MANUAL_REVIEW';
@@ -16952,7 +16958,7 @@ function renderQualityPage(){
             const scoreColor=scoreVal>=70?'#27ae60':scoreVal>=50?'#f39c12':'#c0392b';
             const date=r.disposed_at?new Date(r.disposed_at).toLocaleDateString('en-IN',{day:'2-digit',month:'short'}):'—';
             const summary=r.ai_summary?r.ai_summary.slice(0,80)+(r.ai_summary.length>80?'…':''):'—';
-            const _qs=(r.quality_status||'').toLowerCase().trim();const _ps=(r.processing_status||'').toLowerCase().trim();const hasDetail=((_ps==='complete')||r.parameters_detail||(r.ai_summary&&r.ai_summary!=='Awaiting Call ID'&&!r.ai_summary.startsWith('Reset by')))&&_ps!=='pending_transcript'&&_qs!=='pending';
+            const _qs=(r.quality_status||'').toLowerCase().trim();const _ps=(r.processing_status||'').toLowerCase().trim();const hasDetail=((_ps==='complete')||r.parameters_detail||(r.ai_summary&&r.ai_summary!=='Awaiting Call ID'&&!r.ai_summary.startsWith('Reset by')))&&!['pending_transcript','scoring_error','transcript_error','failed','fetching_transcript','scoring','transcript_ready'].includes(_ps)&&_qs!=='pending';
             const rowDate=r.disposed_at?_qLocalDate(r.disposed_at):'';
             // Normalize phone for display and search: ensure leading + and correct country code
             const _rawPhone=(r.phone||r.phone_number||'').trim();
@@ -16994,12 +17000,12 @@ function renderQualityPage(){
                 <span style="font-size:11px;font-weight:700;padding:3px 10px;border-radius:20px;background:${stBg};color:${stColor}">${r.quality_status==='Pending'?'⏳ Pending':r.quality_status||'—'}</span>
               </td>
               <td style="padding:9px 12px;font-size:11px;color:var(--text2);max-width:200px">${
-                r.processing_status==='scoring'?'<span style="color:#f39c12;font-size:11px">⚙️ Scoring… (auto-queue)</span>'
-                :r.processing_status==='fetching_transcript'?'<span style="color:#f39c12;font-size:11px">⏳ Fetching transcript… (auto-queue)</span>'
+                r.processing_status==='scoring'?'<span style="color:#f39c12;font-size:11px">⚙️ Scoring… (click Fetch if stuck)</span>'
+                :r.processing_status==='fetching_transcript'?'<span style="color:#f39c12;font-size:11px">⏳ Not scored yet — click Fetch</span>'
                 :r.processing_status==='transcript_ready'?'<span style="color:#2471a3;font-size:11px">📝 Transcript ready — scoring queued</span>'
-                :r.processing_status==='transcript_error'?'<span style="color:#c0392b;font-size:11px">⚠️ Transcript error — queue will retry</span>'
-                :r.processing_status==='pending_transcript'?'<span style="color:#888;font-size:11px">Awaiting Call ID</span>'
-                :r.processing_status==='failed'?'<span style="color:#c0392b;font-size:11px">⚠️ Failed — queue will retry</span>'
+                :r.processing_status==='transcript_error'?'<span style="color:#c0392b;font-size:11px">⚠️ Transcript error — click Fetch to retry</span>'
+                :r.processing_status==='pending_transcript'?'<span style="color:#888;font-size:11px">Add Call ID, then click Fetch</span>'
+                :r.processing_status==='failed'?'<span style="color:#c0392b;font-size:11px">⚠️ Failed — click Fetch to retry</span>'
                 :h(summary)
               }</td>
               <td style="padding:9px 12px;text-align:center">
@@ -17014,16 +17020,16 @@ function renderQualityPage(){
                    `<button onclick="qAddMoreCallId('${r.id}')" style="font-size:10px;padding:2px 7px;border-radius:4px;border:1px solid #8e44ad;background:#f5eef8;color:#8e44ad;cursor:pointer;white-space:nowrap">➕ Call ID</button>`+
                    `<button onclick="qResetCallId('${r.id}')" style="font-size:10px;padding:2px 7px;border-radius:4px;border:1px solid #ccc;background:#f5f5f5;color:#555;cursor:pointer;white-space:nowrap">↺</button>`
                   :r.processing_status==='fetching_transcript'||r.processing_status==='scoring'
-                  /* IN PROGRESS: status | +Call ID | Reset */
-                  ?`<span style="font-size:10px;color:#f39c12;white-space:nowrap">${r.processing_status==='scoring'?'⚙️ Scoring…':'⏳ Fetching…'}</span>`+
+                  /* IN PROGRESS: Fetch | +Call ID | Reset */
+                  ?`<button onclick="qFetchNow('${r.id}')" style="font-size:10px;padding:2px 9px;border-radius:4px;border:1px solid #27ae60;background:#27ae60;color:#fff;cursor:pointer;font-weight:700;white-space:nowrap">⬇️ Fetch</button>`+
                    `<button onclick="qAddMoreCallId('${r.id}')" style="font-size:10px;padding:2px 7px;border-radius:4px;border:1px solid #8e44ad;background:#f5eef8;color:#8e44ad;cursor:pointer;white-space:nowrap">➕ Call ID</button>`+
                    `<button onclick="qResetCallId('${r.id}')" style="font-size:10px;padding:2px 7px;border-radius:4px;border:1px solid #ccc;background:#f5f5f5;color:#555;cursor:pointer;white-space:nowrap">↺</button>`
                   :!r.dialpad_call_id
-                  /* NO CALL ID: Add Call ID only */
-                  ?`<button onclick="qAddCallId('${r.id}')" style="font-size:10px;padding:2px 8px;border-radius:4px;border:1px solid #2471a3;background:#eaf4fb;color:#2471a3;cursor:pointer;font-weight:600;white-space:nowrap">📞 Add Call ID</button>`+
+                  /* NO CALL ID: Fetch (asks for ID) | Add Call ID | Reset */
+                  ?`<button onclick="qFetchNow('${r.id}')" style="font-size:10px;padding:2px 9px;border-radius:4px;border:1px solid #27ae60;background:#27ae60;color:#fff;cursor:pointer;font-weight:700;white-space:nowrap">⬇️ Fetch</button>`+`<button onclick="qAddCallId('${r.id}')" style="font-size:10px;padding:2px 8px;border-radius:4px;border:1px solid #2471a3;background:#eaf4fb;color:#2471a3;cursor:pointer;font-weight:600;white-space:nowrap">📞 Add Call ID</button>`+
                    `<button onclick="qResetCallId('${r.id}')" style="font-size:10px;padding:2px 7px;border-radius:4px;border:1px solid #ccc;background:#f5f5f5;color:#555;cursor:pointer;white-space:nowrap">↺</button>`
-                  /* HAS CALL ID, PENDING: Add Call ID | +Call ID | Reset */
-                  :`<button onclick="qAddCallId('${r.id}')" style="font-size:10px;padding:2px 8px;border-radius:4px;border:1px solid #2471a3;background:#eaf4fb;color:#2471a3;cursor:pointer;font-weight:600;white-space:nowrap">📞 Add Call ID</button>`+
+                  /* HAS CALL ID, PENDING: Fetch | Add Call ID | +Call ID | Reset */
+                  :`<button onclick="qFetchNow('${r.id}')" style="font-size:10px;padding:2px 9px;border-radius:4px;border:1px solid #27ae60;background:#27ae60;color:#fff;cursor:pointer;font-weight:700;white-space:nowrap">⬇️ Fetch</button>`+`<button onclick="qAddCallId('${r.id}')" style="font-size:10px;padding:2px 8px;border-radius:4px;border:1px solid #2471a3;background:#eaf4fb;color:#2471a3;cursor:pointer;font-weight:600;white-space:nowrap">📞 Add Call ID</button>`+
                    `<button onclick="qAddMoreCallId('${r.id}')" style="font-size:10px;padding:2px 7px;border-radius:4px;border:1px solid #8e44ad;background:#f5eef8;color:#8e44ad;cursor:pointer;white-space:nowrap">➕ Call ID</button>`+
                    `<button onclick="qResetCallId('${r.id}')" style="font-size:10px;padding:2px 7px;border-radius:4px;border:1px solid #ccc;background:#f5f5f5;color:#555;cursor:pointer;white-space:nowrap">↺</button>`}
                 </div>
@@ -17198,6 +17204,53 @@ function _qPatchTable(rec,action){
     const existing=document.getElementById(rowId);
     if(existing) existing.outerHTML=rowHtml;
     else tbl.insertAdjacentHTML('afterbegin',rowHtml);
+  }
+}
+
+// ── Manual Fetch: agent clicks Fetch → transcript pulled from Dialpad → AI scores it ──
+let _qFetching={};
+async function qFetchNow(qId){
+  if(_qFetching[qId])return;
+  _qFetching[qId]=true;
+  try{
+    const{data:rec,error:rErr}=await sb.from('quality_results').select('id,dialpad_call_id,transcript').eq('id',qId).single();
+    if(rErr||!rec){showToast('⚠️ Could not load this record','error');return;}
+    let callId=(rec.dialpad_call_id||'').replace(/\D/g,'');
+    if(callId.length!==16){
+      const inp=prompt('Enter the 16-digit Dialpad Call ID for this record:');
+      if(!inp)return;
+      callId=inp.replace(/\D/g,'');
+      if(callId.length!==16){showToast('⚠️ Call ID must be exactly 16 digits','error');return;}
+    }
+    let transcript=rec.transcript||'';
+    if(!transcript){
+      showToast('⏳ Fetching transcript from Dialpad…');
+      await sb.from('quality_results').update({dialpad_call_id:callId,processing_status:'fetching_transcript'}).eq('id',qId);
+      let tData={},tRes;
+      try{
+        tRes=await fetch(`${NETLIFY_BASE}/dialpad-proxy`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'get_transcript',call_id:callId})});
+        try{tData=await tRes.json();}catch(e){tData={error:'Invalid response (status '+tRes.status+')'};}
+      }catch(e){tData={error:e.message};}
+      if(!tRes||!tRes.ok||tData.error||!tData.transcript){
+        const msg=tData.error||'Transcript not ready in Dialpad yet — wait a few minutes and click Fetch again';
+        await sb.from('quality_results').update({processing_status:'pending_transcript',ai_summary:'Fetch failed: '+msg}).eq('id',qId);
+        showToast('⚠️ '+msg,'error');
+        renderQualityPage();
+        return;
+      }
+      transcript=tData.transcript;
+      await sb.from('quality_results').update({transcript,dialpad_call_id:callId,processing_status:'transcript_ready'}).eq('id',qId);
+    }
+    showToast('⚙️ Transcript found — calculating score…');
+    await scoreQualityRecord(qId);
+    const{data:after}=await sb.from('quality_results').select('processing_status,quality_status,score').eq('id',qId).single();
+    if(after&&['scored','complete'].includes(after.processing_status)) showToast('✅ Score ready: '+Math.round(after.score||0)+' ('+(after.quality_status||'')+')');
+    else showToast('⚠️ Scoring did not finish — click Fetch again','error');
+    renderQualityPage();
+  }catch(e){
+    showToast('⚠️ Fetch failed: '+e.message,'error');
+  }finally{
+    delete _qFetching[qId];
   }
 }
 

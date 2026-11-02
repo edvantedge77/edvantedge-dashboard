@@ -14,7 +14,7 @@
 
 [functions."process-quality-queue"]
   timeout = 26
-  schedule = "*/5 * * * *"
+  # Auto-fetch schedule removed: agents now click "Fetch" in Quality manually.
 
 [[headers]]
   for = "/api/*"
