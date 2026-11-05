@@ -554,7 +554,7 @@ tr:last-child td{border-bottom:none;}tr:hover td{background:#fafafa;cursor:point
 // login screen and logged to the console, so a quick hard refresh + glance
 // tells him definitively whether Netlify is actually serving THIS file yet,
 // instead of guessing at whether a reported bug was ever really fixed.
-const BUILD_STAMP='2026-11-06-dup-check-db';
+const BUILD_STAMP='2026-11-06-dup-check-db2';
 console.log('[EdvantEdge CRM] build', BUILD_STAMP);
 const SB_URL='https://qyubbieikviesfcorusq.supabase.co';
 const SB_KEY=['eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF5','dWJiaWVpa3ZpZXNmY29ydXNxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU0OTkzNjEsImV4cCI6MjA5MTA3NTM2MX0.t_4mZWd_Qo1KHrGN9imMnnpn6UkLtLFrOeI2Q9lPD08'].join('');
@@ -7104,12 +7104,15 @@ function bkCheckDupAll(ph){
 // them to the local list. The local list can be empty, still loading, or limited to one
 // agent's own bookings, which made the duplicate check wrongly say "No duplicate".
 async function bkMergeDbMatches(ph){
+  window._bkDupDbg={digits:_bkDigits(ph),db:null,err:null};
   try{
     const d=_bkDigits(ph);
     if(d.length<9)return;
     const t=d.slice(-9);
     const{data,error}=await sb.from('DEMO-BOOKING').select('*').or('phone_code.ilike.%'+t+'%,alt_phone.ilike.%'+t+'%').limit(25);
-    if(error||!data)return;
+    if(error){window._bkDupDbg.err=error.message||String(error);return;}
+    if(!data)return;
+    window._bkDupDbg.db=data.length;
     if(!Array.isArray(_bkBookings))_bkBookings=[];
     const have=new Set(_bkBookings.map(b=>b.id));
     data.forEach(b=>{if(!have.has(b.id)&&_bkPhones(b).some(x=>_bkPhoneMatch(ph,x)))_bkBookings.push(b);});
@@ -7206,6 +7209,18 @@ async function bkRunCheckDup(){
     }
     bkShowDupCheckModal({type:'clear'});
   }
+  // Small grey line showing exactly what was checked (helps support)
+  try{
+    const dbg=window._bkDupDbg||{};
+    const box=document.getElementById('bkDupCheckResultModal');
+    if(box){
+      const line=document.createElement('div');
+      line.style.cssText='font-size:10px;color:#999;text-align:center;margin-top:8px;word-break:break-all';
+      line.textContent='Checked: '+ph+' · client: '+(cl||'none')+' · list: '+(_bkBookings||[]).length+' · db matches: '+(dbg.db==null?'n/a':dbg.db)+(dbg.err?' · db error: '+dbg.err:'')+' · build '+BUILD_STAMP;
+      const closeBtn=[...box.querySelectorAll('button')].pop();
+      if(closeBtn&&closeBtn.parentNode)closeBtn.parentNode.appendChild(line);else box.appendChild(line);
+    }
+  }catch(e){}
 }
 // ── Dup Check Result Modal (centered, shown after clicking Check Dup) ────────
 function bkShowDupCheckModal(info){
