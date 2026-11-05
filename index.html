@@ -554,7 +554,7 @@ tr:last-child td{border-bottom:none;}tr:hover td{background:#fafafa;cursor:point
 // login screen and logged to the console, so a quick hard refresh + glance
 // tells him definitively whether Netlify is actually serving THIS file yet,
 // instead of guessing at whether a reported bug was ever really fixed.
-const BUILD_STAMP='2026-11-05-dup-modal-front';
+const BUILD_STAMP='2026-11-06-dup-check-db';
 console.log('[EdvantEdge CRM] build', BUILD_STAMP);
 const SB_URL='https://qyubbieikviesfcorusq.supabase.co';
 const SB_KEY=['eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF5','dWJiaWVpa3ZpZXNmY29ydXNxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU0OTkzNjEsImV4cCI6MjA5MTA3NTM2MX0.t_4mZWd_Qo1KHrGN9imMnnpn6UkLtLFrOeI2Q9lPD08'].join('');
@@ -5820,6 +5820,7 @@ async function bkStandaloneSave(){
   // Duplicate check — same phone + same client + same child = hard block.
   // Siblings (same phone, same client, DIFFERENT child name) are allowed.
   if(!S._bkEditId){
+    await bkMergeDbMatches(pc);
     const dupSf=bkCheckDupForClient(pc,_bkSelClient,cn);
     if(dupSf){if(saveBtn){saveBtn.disabled=false;saveBtn.textContent='💾 Save Booking';}bkShowDupModal(dupSf);return;}
   }
@@ -7099,6 +7100,22 @@ function bkCheckDupAll(ph){
   return(_bkBookings||[]).filter(b=>_bkPhones(b).some(p=>_bkPhoneMatch(ph,p)));
 }
 
+// Ask the database directly for bookings with this phone (any agent, any client) and add
+// them to the local list. The local list can be empty, still loading, or limited to one
+// agent's own bookings, which made the duplicate check wrongly say "No duplicate".
+async function bkMergeDbMatches(ph){
+  try{
+    const d=_bkDigits(ph);
+    if(d.length<9)return;
+    const t=d.slice(-9);
+    const{data,error}=await sb.from('DEMO-BOOKING').select('*').or('phone_code.ilike.%'+t+'%,alt_phone.ilike.%'+t+'%').limit(25);
+    if(error||!data)return;
+    if(!Array.isArray(_bkBookings))_bkBookings=[];
+    const have=new Set(_bkBookings.map(b=>b.id));
+    data.forEach(b=>{if(!have.has(b.id)&&_bkPhones(b).some(x=>_bkPhoneMatch(ph,x)))_bkBookings.push(b);});
+  }catch(e){console.warn('bkMergeDbMatches:',e);}
+}
+
 // Returns the booking that matches phone + SAME client + SAME child — used for hard block.
 // Siblings (different child_name, same parent phone, same client) are NOT blocked.
 function bkCheckDupForClient(ph,client,childName){
@@ -7134,14 +7151,15 @@ function bkShowDupModal(dup){
 function bkDupCancel(){
   const m=document.getElementById('bkDupModal');if(m)m.style.display='none';
 }
-function bkRunCheckDup(){
+async function bkRunCheckDup(){
   const phRaw=(document.getElementById('bkf_ph')?.value||document.getElementById('bksf_ph')?.value||'').trim();
   const warn=document.getElementById('bkDupWarn')||document.getElementById('bksf_dup_warn');
   const msg=document.getElementById('bkDupMsg')||document.getElementById('bksf_dup_msg');
   if(!phRaw){if(warn&&msg){warn.style.display='block';msg.innerHTML='⚠️ Please enter a Phone Number first.';}return;}
   // Use full combined phone for matching
   const ph=bkCombinedDigits()||phRaw;
-  const cl=bkSelectedClient||'';
+  await bkMergeDbMatches(ph);
+  const cl=bkSelectedClient||_bkSelClient||'';
   const childNm=(document.getElementById('bkf_cn')?.value||document.getElementById('bksf_cn')?.value||'').trim();
   const dupSame=bkCheckDupForClient(ph,cl,childNm);
   const dupAllMatches=bkCheckDupAll(ph);
@@ -7525,6 +7543,7 @@ async function bkSaveBooking(){
   if(!S._bkEditId){
     const cn=document.getElementById('bkf_cn')?.value||'';
     const phFull=bkCombinedDigits()||ph;
+    await bkMergeDbMatches(phFull);
     const dup=bkCheckDupForClient(phFull,cl,cn);
     if(dup){bkShowDupModal(dup);return;} // hard stop — modal shown, save aborted
   }
