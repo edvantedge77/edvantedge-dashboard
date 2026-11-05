@@ -554,7 +554,7 @@ tr:last-child td{border-bottom:none;}tr:hover td{background:#fafafa;cursor:point
 // login screen and logged to the console, so a quick hard refresh + glance
 // tells him definitively whether Netlify is actually serving THIS file yet,
 // instead of guessing at whether a reported bug was ever really fixed.
-const BUILD_STAMP='2026-11-06-dup-check-db2';
+const BUILD_STAMP='2026-11-06-dup-check-db3';
 console.log('[EdvantEdge CRM] build', BUILD_STAMP);
 const SB_URL='https://qyubbieikviesfcorusq.supabase.co';
 const SB_KEY=['eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF5','dWJiaWVpa3ZpZXNmY29ydXNxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU0OTkzNjEsImV4cCI6MjA5MTA3NTM2MX0.t_4mZWd_Qo1KHrGN9imMnnpn6UkLtLFrOeI2Q9lPD08'].join('');
@@ -7155,15 +7155,16 @@ function bkDupCancel(){
   const m=document.getElementById('bkDupModal');if(m)m.style.display='none';
 }
 async function bkRunCheckDup(){
-  const phRaw=(document.getElementById('bkf_ph')?.value||document.getElementById('bksf_ph')?.value||'').trim();
-  const warn=document.getElementById('bkDupWarn')||document.getElementById('bksf_dup_warn');
-  const msg=document.getElementById('bkDupMsg')||document.getElementById('bksf_dup_msg');
+  const _std=_bkStdOpen();
+  const phRaw=(document.getElementById(_std?'bksf_ph':'bkf_ph')?.value||'').trim();
+  const warn=document.getElementById(_std?'bksf_dup_warn':'bkDupWarn')||document.getElementById('bkDupWarn')||document.getElementById('bksf_dup_warn');
+  const msg=document.getElementById(_std?'bksf_dup_msg':'bkDupMsg')||document.getElementById('bkDupMsg')||document.getElementById('bksf_dup_msg');
   if(!phRaw){if(warn&&msg){warn.style.display='block';msg.innerHTML='⚠️ Please enter a Phone Number first.';}return;}
   // Use full combined phone for matching
   const ph=bkCombinedDigits()||phRaw;
   await bkMergeDbMatches(ph);
-  const cl=bkSelectedClient||_bkSelClient||'';
-  const childNm=(document.getElementById('bkf_cn')?.value||document.getElementById('bksf_cn')?.value||'').trim();
+  const cl=(_std?_bkSelClient:bkSelectedClient)||'';
+  const childNm=(document.getElementById(_std?'bksf_cn':'bkf_cn')?.value||'').trim();
   const dupSame=bkCheckDupForClient(ph,cl,childNm);
   const dupAllMatches=bkCheckDupAll(ph);
   const dupAny=dupAllMatches[0]||null;
@@ -7318,10 +7319,16 @@ function bkExpectedDigits(){
   return rules[co]||null;
 }
 // Returns combined digits string (prefix digits + phone digits, stripped of non-numeric)
+// True when the standalone booking form (bksf_*) is the one on screen. Both forms can exist
+// in the page at the same time; the hidden Add-Lead form (bkf_*) still holds default values
+// (prefix +1), which wrongly got mixed into the number being checked.
+function _bkStdOpen(){const e=document.getElementById('bksf_ph');return !!(e&&e.offsetParent!==null);}
 function bkCombinedDigits(){
-  // Support both bkAddModal (bkf_*) and bkStandaloneForm (bksf_*)
-  const pc=(document.getElementById('bkf_pc')?.value||document.getElementById('bksf_pc')?.value||'').replace(/\D/g,'');
-  const ph=(document.getElementById('bkf_ph')?.value||document.getElementById('bksf_ph')?.value||'').replace(/\D/g,'');
+  const std=_bkStdOpen();
+  const pcEl=document.getElementById(std?'bksf_pc':'bkf_pc')||document.getElementById('bkf_pc')||document.getElementById('bksf_pc');
+  const phEl=document.getElementById(std?'bksf_ph':'bkf_ph')||document.getElementById('bkf_ph')||document.getElementById('bksf_ph');
+  const pc=((pcEl&&pcEl.value)||'').replace(/\D/g,'');
+  const ph=((phEl&&phEl.value)||'').replace(/\D/g,'');
   return pc+ph;
 }
 function bkPhoneInput(){
