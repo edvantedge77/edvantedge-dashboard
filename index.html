@@ -554,7 +554,7 @@ tr:last-child td{border-bottom:none;}tr:hover td{background:#fafafa;cursor:point
 // login screen and logged to the console, so a quick hard refresh + glance
 // tells him definitively whether Netlify is actually serving THIS file yet,
 // instead of guessing at whether a reported bug was ever really fixed.
-const BUILD_STAMP='2026-11-02-manual-fetch';
+const BUILD_STAMP='2026-11-05-dup-modal-front';
 console.log('[EdvantEdge CRM] build', BUILD_STAMP);
 const SB_URL='https://qyubbieikviesfcorusq.supabase.co';
 const SB_KEY=['eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF5','dWJiaWVpa3ZpZXNmY29ydXNxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU0OTkzNjEsImV4cCI6MjA5MTA3NTM2MX0.t_4mZWd_Qo1KHrGN9imMnnpn6UkLtLFrOeI2Q9lPD08'].join('');
@@ -6600,7 +6600,7 @@ function renderAgentBookingsView(){
 
   // DUPLICATE BOOKING — HARD BLOCK MODAL (z:9100)
   // Same phone + same client = cannot save. Different client = allowed.
-  +'<div id="bkDupModal" style="display:none;position:fixed;inset:0;background:rgba(15,25,40,.65);backdrop-filter:blur(4px);z-index:9100;align-items:center;justify-content:center">'
+  +'<div id="bkDupModal" style="display:none;position:fixed;inset:0;background:rgba(15,25,40,.65);backdrop-filter:blur(4px);z-index:10000;align-items:center;justify-content:center">'
   +'<div style="background:#fff;border-radius:12px;width:500px;max-width:96vw;box-shadow:0 12px 48px rgba(0,0,0,.3);overflow:hidden">'
   // header — solid red, blocked icon
   +'<div style="background:#C0392B;padding:16px 18px;display:flex;align-items:center;gap:12px">'
