@@ -554,7 +554,7 @@ tr:last-child td{border-bottom:none;}tr:hover td{background:#fafafa;cursor:point
 // login screen and logged to the console, so a quick hard refresh + glance
 // tells him definitively whether Netlify is actually serving THIS file yet,
 // instead of guessing at whether a reported bug was ever really fixed.
-const BUILD_STAMP='2026-11-13-cdr-dials-clients';
+const BUILD_STAMP='2026-11-13-cdr-dials-clients2';
 console.log('[EdvantEdge CRM] build', BUILD_STAMP);
 const SB_URL='https://qyubbieikviesfcorusq.supabase.co';
 const SB_KEY=['eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF5','dWJiaWVpa3ZpZXNmY29ydXNxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU0OTkzNjEsImV4cCI6MjA5MTA3NTM2MX0.t_4mZWd_Qo1KHrGN9imMnnpn6UkLtLFrOeI2Q9lPD08'].join('');
@@ -2781,10 +2781,14 @@ function bkPhoneKey(p){ let d=String(p==null?'':p).replace(/\D/g,''); if(d.start
 async function clEnsureBookMap(force){
   if(!force&&_bkMap&&Date.now()-_bkMapAt<20000) return _bkMap;
   try{
-    const {data,error}=await sb.rpc('booking_counts_by_phone');
-    if(error) throw error;
+    // the database returns at most 1,000 rows per call, so read it in pages (stable order)
     const m={};
-    (data||[]).forEach(r=>{ const o=(m[r.norm]=m[r.norm]||{}); o[r.client]=(o[r.client]||0)+Number(r.n); });
+    for(let from=0;;from+=1000){
+      const {data,error}=await sb.rpc('booking_counts_by_phone').order('norm').order('client').range(from,from+999);
+      if(error) throw error;
+      (data||[]).forEach(r=>{ const o=(m[r.norm]=m[r.norm]||{}); o[r.client]=(o[r.client]||0)+Number(r.n); });
+      if(!data||data.length<1000) break;
+    }
     _bkMap=m; _bkMapAt=Date.now();
   }catch(e){ console.error('booking counts failed:',e); _bkMap=_bkMap||{}; }
   return _bkMap;
