@@ -554,7 +554,7 @@ tr:last-child td{border-bottom:none;}tr:hover td{background:#fafafa;cursor:point
 // login screen and logged to the console, so a quick hard refresh + glance
 // tells him definitively whether Netlify is actually serving THIS file yet,
 // instead of guessing at whether a reported bug was ever really fixed.
-const BUILD_STAMP='2026-11-13-import-disp-cr';
+const BUILD_STAMP='2026-11-13-cdr-dials-clients';
 console.log('[EdvantEdge CRM] build', BUILD_STAMP);
 const SB_URL='https://qyubbieikviesfcorusq.supabase.co';
 const SB_KEY=['eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF5','dWJiaWVpa3ZpZXNmY29ydXNxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU0OTkzNjEsImV4cCI6MjA5MTA3NTM2MX0.t_4mZWd_Qo1KHrGN9imMnnpn6UkLtLFrOeI2Q9lPD08'].join('');
@@ -1860,6 +1860,7 @@ async function goPage(p){
   }
   else if(p==='teamchat'){ chatInit(); }
   else if(p==='import')  { render(); } // Static page
+  else if(p==='cdr')     { _cdr.batches=null; render(); }
   else if(p==='export')  { render(); } // Static page
   else if(p==='bulkedit'){ if(!S.users?.length) loadUsers().then(()=>render()).catch(()=>{}); }
   else if(p==='datamanage'){ loadAsgnData().then(()=>render()).then(()=>dmInitFilterValues()).catch(()=>render()); }
@@ -2638,8 +2639,8 @@ function setExPeriod(p){
 // crm_leads (confirmed against the live schema — only 'disposition' and
 // 'dialpad_count' exist) — that mismatch is exactly why the report/export
 // were failing with "column crm_leads.sub_disposition does not exist".
-const EX_COLS=['id','parent_name','child_name','phone_code','alt_phone','email','city','Zone','Country','grade','ethnicity','data_set','disposition','client_booked','agent_id','agent_name','dialpad_count','added_at','updated_at','cooling_since','notes'];
-const EX_HDRS=['ID','Parent Name','Child Name','Phone Code','Alt Phone','Email','City','Zone','Country','Grade','Ethnicity','Dataset','Disposition','Client Booked','Agent ID','Agent Name','Dials','Added At','Updated At','Cooling Since','Notes'];
+const EX_COLS=['id','parent_name','child_name','phone_code','alt_phone','email','city','Zone','Country','grade','ethnicity','data_set','disposition','client_booked','agent_id','agent_name','dialpad_count','total_dials','added_at','updated_at','cooling_since','notes'];
+const EX_HDRS=['ID','Parent Name','Child Name','Phone Code','Alt Phone','Email','City','Zone','Country','Grade','Ethnicity','Dataset','Disposition','Client Booked','Agent ID','Agent Name','Dials','Total Dials','Added At','Updated At','Cooling Since','Notes'];
 
 function exDownload(rows, fname){
   if(!rows.length){ const m=document.getElementById('ex-msg'); if(m) m.innerHTML='<span style="color:#C0392B;font-weight:600">No rows matched those filters.</span>'; return; }
@@ -2759,6 +2760,134 @@ function renderExport(){
       <button class="btn btn-red" style="padding:10px 28px" onclick="exportFiltered()">Download filtered CSV</button>
       <button class="btn btn-outline" onclick="exportAll()">Download ALL leads</button>
       <div id="ex-msg"></div>
+    </div>
+  </div>`;
+}
+
+// ══════════════════════════════════════════════════════════════════
+// DIAL COUNT + CLIENT BOOKING COUNTS (used by All Leads, Export, Import)
+//   Dials  : crm_leads.total_dials — kept up to date in the database from the CDR Check uploads
+//   Clients: counted live from the Bookings table (DEMO-BOOKING) by mobile number, each booking once
+// ══════════════════════════════════════════════════════════════════
+const DIAL_FILTER_MAX=10;
+function dialLabel(n){ n=Number(n)||0; return n===0?'Fresh Lead':'Dialled '+n+(n===1?' Time':' Times'); }
+function dialFilterOptionsHTML(){
+  let o='<option value="">All Dial Counts</option><option value="0">0 – Fresh Lead</option>';
+  for(let i=1;i<=DIAL_FILTER_MAX;i++) o+='<option value="'+i+'">'+i+' – Dialled '+i+(i===1?' Time':' Times')+'</option>';
+  return o+'<option value="'+(DIAL_FILTER_MAX+1)+'+">'+(DIAL_FILTER_MAX+1)+'+ Times</option>';
+}
+let _bkMap=null,_bkMapAt=0;
+function bkPhoneKey(p){ let d=String(p==null?'':p).replace(/\D/g,''); if(d.startsWith('00')) d=d.slice(2); return d; }
+async function clEnsureBookMap(force){
+  if(!force&&_bkMap&&Date.now()-_bkMapAt<20000) return _bkMap;
+  try{
+    const {data,error}=await sb.rpc('booking_counts_by_phone');
+    if(error) throw error;
+    const m={};
+    (data||[]).forEach(r=>{ const o=(m[r.norm]=m[r.norm]||{}); o[r.client]=(o[r.client]||0)+Number(r.n); });
+    _bkMap=m; _bkMapAt=Date.now();
+  }catch(e){ console.error('booking counts failed:',e); _bkMap=_bkMap||{}; }
+  return _bkMap;
+}
+// → {per:{client:n} for each BK_CLIENTS, other:n, total:n} for one lead phone
+function clBookCounts(phone){
+  const m=(_bkMap||{})[bkPhoneKey(phone)]||{}, per={}; let other=0,total=0;
+  BK_CLIENTS.forEach(c=>{ per[c]=0; });
+  Object.keys(m).forEach(c=>{ const n=m[c]; total+=n; if(per[c]!==undefined) per[c]+=n; else other+=n; });
+  return {per,other,total};
+}
+
+// ══════════════════════════════════════════════════════════════════
+// CDR CHECK — upload mobile-number lists (no duplicate check) → dial counts on matching leads
+// ══════════════════════════════════════════════════════════════════
+let _cdr={batches:null,busy:'',file:null,pasted:'',last:null};
+async function cdrLoad(){
+  try{
+    const {data,error}=await sb.from('cdr_batches').select('*').order('id',{ascending:false}).limit(50);
+    if(error) throw error;
+    _cdr.batches=data||[];
+  }catch(e){ _cdr.batches=[]; showToast('Could not load CDR uploads: '+(e.message||e),'error'); }
+  if(S.page==='cdr') render();
+}
+function cdrPick(inp){ const f=inp?.files?.[0]; if(!f) return; if(!/\.(csv|txt|xlsx|xls)$/i.test(f.name||'')){ showToast('Please choose a .txt, .csv, .xls or .xlsx file','error'); return; } _cdr.file=f; const el=document.getElementById('cdr-fname'); if(el) el.textContent='📄 '+f.name+' ('+Math.round(f.size/1024)+' KB)'; }
+function cdrDrop(e){ e.preventDefault(); e.currentTarget.style.borderColor='#ccc'; const f=e.dataTransfer?.files?.[0]; if(f){ _cdr.file=f; const el=document.getElementById('cdr-fname'); if(el) el.textContent='📄 '+f.name; } }
+// every cell of the first column (or every line of pasted text) is one dialed number; header text is skipped
+function cdrNumbersFromRows(rows){
+  const out=[];
+  rows.forEach(r=>{
+    const cell=(Array.isArray(r)?r[0]:r); const raw=String(cell==null?'':cell).trim(); if(!raw) return;
+    const n=bkPhoneKey(raw); if(n.length<6) return;           // headers / blanks / junk
+    out.push(n);
+  });
+  return out;
+}
+async function cdrUpload(){
+  if(_cdr.busy) return;
+  const paste=(document.getElementById('cdr-paste')?.value||'').trim();
+  let nums=[], label='';
+  try{
+    _cdr.busy='Reading numbers…'; render();
+    if(_cdr.file){ nums=nums.concat(cdrNumbersFromRows(await impReadRows(_cdr.file))); label=_cdr.file.name; }
+    if(paste){ nums=nums.concat(cdrNumbersFromRows(paste.split(/\r?\n/))); label=label||('Pasted numbers '+new Date().toISOString().slice(0,16).replace('T',' ')); }
+    if(!nums.length) throw new Error('No mobile numbers found. Choose a file or paste numbers.');
+    // A number repeated N times in the file = dialed N times. Nothing is rejected or de-duplicated away.
+    const counts={}; nums.forEach(n=>{ counts[n]=(counts[n]||0)+1; });
+    const keys=Object.keys(counts);
+    _cdr.busy='Saving '+nums.length.toLocaleString()+' dials…'; render();
+    const {data:b,error:be}=await sb.from('cdr_batches').insert({name:label.slice(0,190),total_numbers:keys.length,total_dials:nums.length,created_by:S.user?.id||null}).select().single();
+    if(be) throw be;
+    const rows=keys.map(n=>({batch_id:b.id,mobile_norm:n,cnt:counts[n]}));
+    for(let i=0;i<rows.length;i+=1000){
+      const {error}=await sb.from('cdr_rows').insert(rows.slice(i,i+1000));
+      if(error){ await sb.from('cdr_batches').delete().eq('id',b.id); throw error; }
+      _cdr.busy='Saving… '+Math.min(i+1000,rows.length).toLocaleString()+' / '+rows.length.toLocaleString(); const el=document.getElementById('cdr-busy'); if(el) el.textContent=_cdr.busy;
+    }
+    _cdr.busy='Updating dial counts on leads…'; render();
+    const {data:matched,error:ae}=await sb.rpc('cdr_apply_batch',{bid:b.id,sign:1});
+    if(ae) throw ae;
+    _cdr.last={name:label,numbers:keys.length,dials:nums.length,matched:matched||0};
+    _cdr.file=null; _cdr.busy='';
+    if(S.cl){S.cl.counts=null;}
+    showToast('✅ CDR list saved — '+nums.length.toLocaleString()+' dials added');
+    await cdrLoad();
+  }catch(e){ _cdr.busy=''; render(); showToast('⚠️ '+(e.message||e),'error'); }
+}
+async function cdrRemove(id){
+  const b=(_cdr.batches||[]).find(x=>x.id===id); if(!b) return;
+  if(!confirm('Remove "'+b.name+'"?\n\nIts dials will be taken back from the leads.')) return;
+  try{
+    _cdr.busy='Removing…'; render();
+    const {error:ae}=await sb.rpc('cdr_apply_batch',{bid:id,sign:-1}); if(ae) throw ae;
+    const {error:de}=await sb.from('cdr_batches').delete().eq('id',id); if(de) throw de;
+    _cdr.busy=''; _cdr.last=null; showToast('CDR list removed and its dials taken back');
+    await cdrLoad();
+  }catch(e){ _cdr.busy=''; render(); showToast('⚠️ '+(e.message||e),'error'); }
+}
+function renderCdr(){
+  const title='<div class="pg-title" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">CDR Check <span style="font-size:12px;font-weight:400;color:var(--text2)">Upload only mobile numbers – we count how many times each number was dialed.</span></div>';
+  if(_cdr.batches===null){ setTimeout(()=>{ if(_cdr.batches===null) cdrLoad(); },0); return title+'<div class="card" style="text-align:center;padding:30px;color:var(--text2)">⏳ Loading…</div>'; }
+  if(_cdr.busy) return title+'<div class="card" style="text-align:center;padding:40px"><div style="font-size:30px">⏳</div><div id="cdr-busy" style="margin-top:8px;font-weight:600">'+h(_cdr.busy)+'</div></div>';
+  const L=_cdr.last;
+  const rows=(_cdr.batches||[]).map(b=>'<tr><td>'+h(b.name)+'</td><td style="text-align:right">'+Number(b.total_numbers||0).toLocaleString()+'</td><td style="text-align:right">'+Number(b.total_dials||0).toLocaleString()+'</td><td>'+h(String(b.created_at||'').slice(0,16).replace('T',' '))+'</td><td><button class="btn btn-outline btn-sm" style="color:#c0392b" onclick="cdrRemove('+b.id+')">🗑 Remove</button></td></tr>').join('');
+  return title+`
+  ${L?`<div class="card" style="background:#ecfdf5;border:1px solid #a7f3d0;margin-bottom:14px"><b>✅ Saved: ${h(L.name)}</b><div style="font-size:13px;margin-top:4px">${L.numbers.toLocaleString()} numbers · ${L.dials.toLocaleString()} dials · ${L.matched.toLocaleString()} matching leads updated</div></div>`:''}
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:16px;align-items:start">
+    <div class="card">
+      <h3 style="margin:0 0 6px">Upload dialed numbers</h3>
+      <p style="margin:0 0 12px;color:var(--text2);font-size:13px">One mobile number per row (a single column). A number repeated 3 times in your file = dialed 3 times. <b>No duplicate check</b> – every number is added.</p>
+      <div style="border:2px dashed #ccc;border-radius:var(--lg);padding:1.6rem;text-align:center;cursor:pointer" onclick="document.getElementById('cdr-file').click()" ondragover="event.preventDefault();this.style.borderColor='var(--red)'" ondragleave="this.style.borderColor='#ccc'" ondrop="cdrDrop(event)">
+        <div style="font-size:30px">📂</div><div style="font-weight:700">Click or drag &amp; drop</div>
+        <div style="font-size:12px;color:var(--text2)">TXT, CSV, XLS or XLSX with mobile numbers</div>
+        <div id="cdr-fname" style="margin-top:8px;font-weight:700;color:#065f46">${_cdr.file?'📄 '+h(_cdr.file.name):''}</div></div>
+      <input type="file" id="cdr-file" accept=".txt,.csv,.xls,.xlsx" style="display:none" onchange="cdrPick(this)"/>
+      <label style="display:block;margin-top:14px;font-size:12px;font-weight:700;color:var(--text2)">…or paste numbers (one per line)</label>
+      <textarea id="cdr-paste" placeholder="61412345678&#10;14155550123&#10;447700900123" style="width:100%;min-height:90px;margin-top:4px;padding:8px;border:1.5px solid var(--border);border-radius:var(--r);font-size:12px;font-family:monospace"></textarea>
+      <div style="display:flex;justify-content:flex-end;margin-top:12px"><button class="btn" onclick="cdrUpload()">📞 Upload &amp; update dial counts</button></div>
+    </div>
+    <div class="card">
+      <h3 style="margin:0 0 8px">Recent CDR uploads</h3>
+      ${rows?`<div style="overflow:auto"><table style="width:100%;font-size:12px;border-collapse:collapse"><thead><tr style="text-align:left;color:var(--text2)"><th>File</th><th style="text-align:right">Numbers</th><th style="text-align:right">Dials</th><th>Uploaded</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`:'<p style="color:var(--text2)">No uploads yet.</p>'}
+      <p style="font-size:12px;color:var(--text2);margin:12px 0 0">Dial counts show in <b>All Leads</b> (Dial Count / Total Dials) and in exports. Removing an upload takes its dials back.</p>
     </div>
   </div>`;
 }
@@ -2922,10 +3051,10 @@ async function impFindExisting(norms,onProgress){
       const ch=chunks.shift();
       for(const col of ['phone_code','phone']){
         try{
-          const {data}=await sb.from('crm_leads').select('phone,phone_code,dialpad_dials').in(col,ch);
+          const {data}=await sb.from('crm_leads').select('phone,phone_code,total_dials').in(col,ch);
           (data||[]).forEach(r=>{
             const a=impNorm(r.phone), b=impNorm(r.phone_code);
-            [a,b].forEach(x=>{ if(x){ norms2.add(x); if(r.dialpad_dials!=null) dials[x]=Math.max(dials[x]||0,Number(r.dialpad_dials)||0); } });
+            [a,b].forEach(x=>{ if(x){ norms2.add(x); if(r.total_dials!=null) dials[x]=Math.max(dials[x]||0,Number(r.total_dials)||0); } });
           });
         }catch(e){ console.warn('impFindExisting',e); }
       }
@@ -2937,14 +3066,9 @@ async function impFindExisting(norms,onProgress){
 }
 // demo bookings per client for the rows shown in the table (first 1,000 of the current view)
 async function impLoadBookings(){
-  const view=impViewRows().slice(0,1000).map(r=>r.norm).filter(Boolean);
-  const uniq=[...new Set(view)], map={}, CH=150;
-  for(let i=0;i<uniq.length;i+=CH){
-    try{
-      const {data}=await sb.from('DEMO-BOOKING').select('phone_code,client').in('phone_code',uniq.slice(i,i+CH));
-      (data||[]).forEach(b=>{ const n=impNorm(b.phone_code); (map[n]=map[n]||{}); map[n][b.client]=(map[n][b.client]||0)+1; });
-    }catch(e){ console.warn('impLoadBookings',e); }
-  }
+  // client booking counts come from the Bookings table (same source as All Leads)
+  await clEnsureBookMap(true);
+  const map={}; impViewRows().slice(0,1000).forEach(r=>{ if(r.norm&&!map[r.norm]) map[r.norm]=(_bkMap||{})[bkPhoneKey(r.norm)]||{}; });
   _imp.bookMap=map;
 }
 function impViewRows(){ return _imp.filter?_imp.rows.filter(r=>r.status===_imp.filter):_imp.rows; }
@@ -3078,7 +3202,8 @@ function renderImport(){
   const pill=(k,l,n)=>`<a href="javascript:void(0)" onclick="impSetFilter('${k}')" style="padding:6px 14px;border-radius:16px;font-size:12px;font-weight:700;text-decoration:none;${f===k?'background:#1a2535;color:#fff':'background:#eef1f6;color:#44546a'}">${l} <span style="opacity:.7">${n.toLocaleString()}</span></a>`;
   const tr=rows.map(r=>{
     const bm=_imp.bookMap[r.norm]||{}; let tc=0;
-    const cells=BK_CLIENTS.map(cl=>{ const v=bm[cl]||0; tc+=v; return `<td style="text-align:center">${v?`<span style="background:#e0e7ff;color:#3730a3;font-weight:700;border-radius:8px;padding:1px 8px">${v}</span>`:'<span style="color:#ccc">0</span>'}</td>`; }).join('');
+    tc=Object.keys(bm).reduce((a,k)=>a+bm[k],0);
+    const cells=BK_CLIENTS.map(cl=>{ const v=bm[cl]||0; return `<td style="text-align:center">${v?`<span style="background:#e0e7ff;color:#3730a3;font-weight:700;border-radius:8px;padding:1px 8px">${v}</span>`:'<span style="color:#ccc">0</span>'}</td>`; }).join('');
     return `<tr><td style="color:var(--text2)">${r.row_no}</td><td>${h(r.country)}</td><td>${h(r.parent_name)}</td><td>${h(r.child_name)}</td><td>${h(r.grade)}</td><td><b>${h(r.mobile)}</b></td><td>${h(r.email)}</td><td>${h(r.city)}</td><td>${h(r.timezone)}</td><td>${h(r.ethnicity)}</td><td>${h(r.disposition)}</td>${cells}<td style="text-align:center"><b>${tc}</b></td><td style="text-align:center"><b>${_imp.dialMap[r.norm]||0}</b></td><td>${impStatusPill(r.status)}</td></tr>`;
   }).join('');
   const th=['#','Country','Parent Name','Child Name','Grade','Mobile','Email','City','Time Zone','Ethnicity','Dispositions'].concat(BK_CLIENTS,['Total Clients','Total Dials','Status']).map(x=>`<th style="padding:8px 10px;text-align:left;font-size:11px;white-space:nowrap;background:#f4f6fa">${x}</th>`).join('');
@@ -9614,6 +9739,7 @@ function renderApp(){
     {id:'datamanage',icon:'🗑',label:'Data Management'},
     {id:'performance',icon:'📊',label:'Performance'},
     {id:'bookings',icon:'📋',label:'Bookings'},
+    {id:'cdr',icon:'📞',label:'CDR Check'},
     {id:'agentkitty',icon:'🎯',label:'Agent Kitty'},
     {id:'agentinventory',icon:'📦',label:'Agent Inventory'},
     {id:'todayleads',icon:'📅',label:"Today's Leads"},
@@ -9756,7 +9882,7 @@ function renderApp(){
   </div>`;
 }
 function renderSAPages(){
-  const pages={dashboard:renderSADash,leads:renderSALeads,assign:renderAssign,agents:renderAgents,bulkedit:()=>{ goPage('datamanage'); return ''; },datamanage:renderDataManage,attendance:renderAttendance,performance:renderPerformance,bookings:renderBookings,agentkitty:renderAdminAgentKitty,agentinventory:renderAgentInventory,freshleads:renderFreshLeads,todayleads:renderAdminTodayLeads,reports:renderReports,workedleads:renderWorkedLeads,dispanalysis:renderDispAnalysis,export:renderExport,import:renderImport,settings:renderSettings,addlead:renderAddLeadPage,editlead:renderEditLeadPage,
+  const pages={dashboard:renderSADash,leads:renderSALeads,assign:renderAssign,agents:renderAgents,bulkedit:()=>{ goPage('datamanage'); return ''; },datamanage:renderDataManage,attendance:renderAttendance,performance:renderPerformance,bookings:renderBookings,agentkitty:renderAdminAgentKitty,agentinventory:renderAgentInventory,freshleads:renderFreshLeads,todayleads:renderAdminTodayLeads,reports:renderReports,workedleads:renderWorkedLeads,dispanalysis:renderDispAnalysis,export:renderExport,import:renderImport,cdr:renderCdr,settings:renderSettings,addlead:renderAddLeadPage,editlead:renderEditLeadPage,
     hrms_overview:renderHRMSOverview,hrms_attendance:renderHRMSAttendance,hrms_leaves:renderHRMSLeaves,hrms_salary:renderHRMSSalary,hrms_increment:renderHRMSIncrement,
     quality:renderQualityPage,promptmanager:renderPromptManager,
     teamchat:renderTeamChat,
@@ -10210,19 +10336,28 @@ function crRender(){
     if(l.indexOf('india')>=0)return'India';
     return x;
   }
-  var _agC={},_agSeen={};
-  [].concat(dsRows,ddayRows).forEach(function(b){
-    if(!b.agent)return;
-    var key=b.agent+'|'+(b.id||Math.random());
-    if(_agSeen[key])return;_agSeen[key]=1;
-    var m=_agC[b.agent]||(_agC[b.agent]={}),k=crCtryLabel(b.country);
-    m[k]=(m[k]||0)+1;
-  });
-  function agCtryHtml(ag){
-    var m=_agC[ag];if(!m)return'';
-    return '<div style="margin-top:3px;display:flex;gap:4px;flex-wrap:wrap">'+Object.keys(m).sort(function(a,b){return m[b]-m[a];}).map(function(k){
-      return '<span style="background:#eef3fb;color:#2c4a7c;border-radius:9px;padding:1px 7px;font-size:10px;font-weight:700;white-space:nowrap">🌍 '+crH(k)+' · '+m[k]+'</span>';
+  // Country per agent — DS, D-Day and Done are counted SEPARATELY from their own rows,
+  // so each agent's country counts add up to that column's total.
+  var doneRows=ddayRows.filter(crIsDone);
+  function crCtryMap(rows){var m={};rows.forEach(function(b){var ag=b.agent||'?',k=crCtryLabel(b.country);(m[ag]||(m[ag]={}))[k]=(m[ag][k]||0)+1;});return m;}
+  var _cDs=crCtryMap(dsRows),_cDd=crCtryMap(ddayRows),_cDone=crCtryMap(doneRows);
+  function agCtryHtml(ag,which){
+    var m=(which==='ds'?_cDs:which==='done'?_cDone:_cDd)[ag];if(!m)return'';
+    return '<div style="margin-top:3px;display:flex;gap:4px;flex-wrap:wrap;justify-content:center">'+Object.keys(m).sort(function(a,b){return m[b]-m[a];}).map(function(k){
+      return '<span style="background:#eef3fb;color:#2c4a7c;border-radius:9px;padding:1px 7px;font-size:10px;font-weight:700;white-space:nowrap">'+crH(k)+' · '+m[k]+'</span>';
     }).join('')+'</div>';
+  }
+  // Country pivot (Agent × Country) for one set of bookings
+  function crCtryPivot(rows,title,accent){
+    var m=crCtryMap(rows),tot={},cols=[];
+    rows.forEach(function(b){var k=crCtryLabel(b.country);tot[k]=(tot[k]||0)+1;});
+    cols=Object.keys(tot).sort(function(a,b){return tot[b]-tot[a];});
+    var ags=sorted.filter(function(ag){return m[ag];});
+    var head='<tr style="background:#0f1f3d;color:#fff"><th style="text-align:left;padding-left:18px">Agent</th>'+cols.map(function(c){return '<th>'+crH(c)+'</th>';}).join('')+'<th style="color:'+accent+'">Total</th></tr>';
+    var body=ags.map(function(ag){var t=0;var cells=cols.map(function(c){var v=(m[ag]||{})[c]||0;t+=v;return '<td style="text-align:center">'+(v?'<b>'+v+'</b>':'<span style="color:#ddd">—</span>')+'</td>';}).join('');return '<tr><td style="font-weight:700">'+crH(ag)+'</td>'+cells+'<td style="text-align:center;font-weight:800;color:'+accent+'">'+t+'</td></tr>';}).join('');
+    if(!ags.length)body='<tr><td colspan="'+(cols.length+2)+'" style="text-align:center;padding:18px;color:#8a9ab0">No '+title+' records for this date.</td></tr>';
+    else body+='<tr class="cr-total-row"><td>TOTAL</td>'+cols.map(function(c){return '<td style="text-align:center">'+tot[c]+'</td>';}).join('')+'<td style="text-align:center">'+rows.length+'</td></tr>';
+    return '<div style="font-size:12px;font-weight:800;color:'+accent+';margin:2px 0 8px">'+title+' — country-wise pivot</div><div style="overflow-x:auto"><table class="cr-ptbl"><thead>'+head+'</thead><tbody>'+body+'</tbody></table></div>';
   }
 
   var uRows=sorted.map(function(ag){
@@ -10230,15 +10365,15 @@ function crRender(){
     var cp=crConv(d.done,d.dday);
     var fade=d.dsTotal===0&&d.dday===0?'opacity:.38':'';
     return '<tr style="'+fade+'">'
-      +'<td>'+crH(ag)+agCtryHtml(ag)+'</td>'
-      +'<td>'+numCell(d.dsTotal||0,'')+'</td>'
+      +'<td>'+crH(ag)+'</td>'
+      +'<td>'+numCell(d.dsTotal||0,'')+agCtryHtml(ag,'ds')+'</td>'
       +'<td>'+uCell(d.dsCY,'#d4820a')+'</td>'
       +'<td>'+uCell(d.dsCO,'#2471a3')+'</td>'
       +'<td>'+uCell(d.dsTU,'#C97F00')+'</td>'
       +'<td>'+uCell(d.dsVE,'#1F618D')+'</td>'
       +'<td>'+uCell(d.dsJT,'#8E44AD')+'</td>'
       +'<td style="border-right:2px solid #e8edf5">'+uCell(d.dsEV,'#16A085')+'</td>'
-      +'<td>'+numCell(d.dday,'#1a2535')+'</td>'
+      +'<td>'+numCell(d.dday,'#1a2535')+agCtryHtml(ag,'dd')+'</td>'
       +'<td>'+uCell(d.ddCY,'#d4820a')+'</td>'
       +'<td>'+uCell(d.ddCO,'#2471a3')+'</td>'
       +'<td>'+uCell(d.ddTU,'#C97F00')+'</td>'
@@ -10277,10 +10412,10 @@ function crRender(){
     var cpCol=cp>=70?'#00956e':cp>=40?'#c97f00':'#c0392b';
     var fade=d.dsTotal===0&&d.dday===0?'opacity:.38':'';
     return '<tr style="'+fade+'">'
-      +'<td style="font-weight:700">'+crH(ag)+agCtryHtml(ag)+'</td>'
-      +'<td style="text-align:center">'+numCell(d.dsTotal,'#f5c518')+'</td>'
-      +'<td style="text-align:center">'+numCell(d.dday,'#1a2535')+'</td>'
-      +'<td style="text-align:center">'+numCell(d.done,'#1a8a5a')+'</td>'
+      +'<td style="font-weight:700">'+crH(ag)+'</td>'
+      +'<td style="text-align:center">'+numCell(d.dsTotal,'#f5c518')+agCtryHtml(ag,'ds')+'</td>'
+      +'<td style="text-align:center">'+numCell(d.dday,'#1a2535')+agCtryHtml(ag,'dd')+'</td>'
+      +'<td style="text-align:center">'+numCell(d.done,'#1a8a5a')+agCtryHtml(ag,'done')+'</td>'
       +'<td style="text-align:center"><span style="font-weight:800;color:'+(d.dday?cpCol:'#ccc')+'">'+(d.dday?cp+'%':'—')+'</span></td>'
       +'</tr>';
   }).join('');
@@ -10351,6 +10486,9 @@ function crRender(){
     +crTabBtn('agent','👤 Agent-wise',act==='agent')
     +crTabBtn('country','🌍 Country-wise',act==='country')
     +crTabBtn('client','🏢 Client-wise',act==='client')
+    +crTabBtn('dsctry','📅 DS Country Pivot',act==='dsctry')
+    +crTabBtn('ddctry','🎯 D-Day Country Pivot',act==='ddctry')
+    +crTabBtn('donectry','✅ Done Country Pivot',act==='donectry')
     +'</div>';
 
   var contentHtml='';
@@ -10382,6 +10520,12 @@ function crRender(){
       +'</thead><tbody>'+uRows+'</tbody></table></div>';
   } else if(act==='agent'){
     contentHtml=bkTbl(agRows);
+  } else if(act==='dsctry'){
+    contentHtml=crCtryPivot(dsRows,'📅 Demo Scheduled (DS)','#b8860b');
+  } else if(act==='ddctry'){
+    contentHtml=crCtryPivot(ddayRows,'🎯 D-Day','#1a2535');
+  } else if(act==='donectry'){
+    contentHtml=crCtryPivot(doneRows,'✅ Done','#1a8a5a');
   } else if(act==='country'){
     contentHtml=bkTbl(ctrRows);
   } else {
@@ -15432,10 +15576,17 @@ function clFilterBarHTML(isAdmin){
         <option value="Recycled Leads">Recycled</option>
       </select>`}
       ${isAdmin?`<select id="cl-agent" onchange="clApplyFilter()" style="padding:7px 8px;border:1.5px solid var(--border);border-radius:var(--r);font-size:12px;outline:none"><option value="">All Agents</option>${(S.users||[]).filter(u=>u.role==='agent'&&u.active!==false).map(a=>`<option value="${h(a.id)}">${h(a.name)}</option>`).join('')}</select>`:''}
+      ${isAdmin?`<select id="cl-dials" onchange="clApplyFilter()" title="Filter by how many times the lead was dialed (from CDR uploads)" style="padding:7px 8px;border:1.5px solid var(--border);border-radius:var(--r);font-size:12px;outline:none">${dialFilterOptionsHTML()}</select>`:''}
       <button class="btn btn-red btn-sm" onclick="clApplyFilter()">Search →</button>
       <button class="btn btn-outline btn-sm" onclick="clClear()">Clear</button>
       ${isAdmin?`<button class="btn btn-outline btn-sm" onclick="clExportCSV()" id="cl-export-btn">⬇ Export CSV</button>`:''}
     </div>
+    ${isAdmin?`<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:10px;padding-top:10px;border-top:1px dashed var(--border)">
+      <span style="font-size:12px;font-weight:700;color:var(--navy)">👤 Assign these filtered leads to:</span>
+      <select id="cl-asg-agent" style="padding:7px 8px;border:1.5px solid var(--border);border-radius:var(--r);font-size:12px;outline:none"><option value="">Select agent…</option>${(S.users||[]).filter(u=>u.role==='agent'&&u.active!==false).map(a=>`<option value="${h(a.id)}">${h(a.name)}</option>`).join('')}</select>
+      <input id="cl-asg-n" type="number" min="1" placeholder="How many (blank = all)" style="padding:7px 9px;border:1.5px solid var(--border);border-radius:var(--r);font-size:12px;outline:none;width:150px">
+      <button class="btn btn-sm" style="background:var(--navy);color:#fff" onclick="clAssignFiltered()">Assign</button>
+    </div>`:''}
   </div>`;
 }
 
@@ -15460,7 +15611,7 @@ function renderCountryLeads(isAdmin){
   if(!S.cl) S.cl={country:(isAdmin||S.clToday)?'Australia':null,page:0,total:0,mode:'latest',filters:{},datasets:[],leads:[]};
   const CL=S.cl;
   const CTRY=[{k:'Australia',f:'🇦🇺',ab:'AU'},{k:'United Kingdom',f:'🇬🇧',ab:'GB'},{k:'USA',f:'🇺🇸',ab:'US'},{k:'Canada',f:'🇨🇦',ab:'CA'},{k:'UAE',f:'🇦🇪',ab:'AE'}];
-  const cols=isAdmin?12:11;
+  const cols=isAdmin?21:11;
 
   const ctabs=CTRY.map(({k,f,ab})=>{
     const active=k===CL.country;
@@ -15508,7 +15659,7 @@ function renderCountryLeads(isAdmin){
         <th style="min-width:24px">#</th><th style="min-width:130px">Parent Name</th>
         <th>Child</th><th>Phone</th><th>Zone</th><th>Country</th>
         <th>Grade</th><th>Ethnicity</th><th>Dataset</th><th>Dials</th><th>Disposition</th>
-        ${isAdmin?'<th style="color:#F5A623">Agent</th>':''}
+        ${isAdmin?'<th style="color:#F5A623">Agent</th>'+clAdminExtraHeads():''}
       </tr></thead>
       <tbody id="cl-body"><tr><td colspan="${cols}" style="text-align:center;padding:3rem;color:var(--text3)">Loading...</td></tr></tbody>
     </table></div>
@@ -15658,6 +15809,7 @@ function clApplyFilters(q, isAdminOverride){
   if(f.grade)  q=q.eq('grade',f.grade);
   if(f.eth)    q=q.eq('ethnicity',f.eth);
   if(f.ds)     q=q.eq('data_set',f.ds);
+  if(isAdm && f.dials){ if(String(f.dials).endsWith('+')) q=q.gte('total_dials',parseInt(f.dials)); else q=q.eq('total_dials',parseInt(f.dials)); }
   
   // Agent isolation: agents ONLY see leads assigned to them. The unassigned
   // pool is admin-only (Fresh Leads) and must never be browsable by an agent.
@@ -15694,11 +15846,14 @@ async function clExportCSV(){
   const btn=document.getElementById('cl-export-btn');
   if(btn){ btn.disabled=true; btn.textContent='Exporting…'; }
   try{
-    const cols='parent_name,child_name,phone_code,alt_phone,email,city,Zone,Country,grade,ethnicity,data_set,dialpad_count,disposition,agent_name,updated_at';
+    const cols='parent_name,child_name,phone_code,alt_phone,email,city,Zone,Country,grade,ethnicity,data_set,dialpad_count,total_dials,disposition,agent_name,updated_at';
+    await clEnsureBookMap(true);
     const rows=await dmFetchAll(clBuildQ(cols,true));
     if(!rows.length){ showToast('No leads match the current filter','error'); if(btn){btn.disabled=false;btn.textContent='⬇ Export CSV';} return; }
-    const headers=['Parent Name','Child Name','Phone Code','Alt Phone','Email','City','Zone','Country','Grade','Ethnicity','Dataset','Dials','Disposition','Agent','Last Updated'];
-    const keys=['parent_name','child_name','phone_code','alt_phone','email','city','Zone','Country','grade','ethnicity','data_set','dialpad_count','disposition','agent_name','updated_at'];
+    const headers=['Parent Name','Child Name','Phone Code','Alt Phone','Email','City','Zone','Country','Grade','Ethnicity','Dataset','Dials','Dial Count','Total Dials','Disposition','Agent','Last Updated'].concat(BK_CLIENTS,['Other Clients','Total Clients']);
+    const keys=['parent_name','child_name','phone_code','alt_phone','email','city','Zone','Country','grade','ethnicity','data_set','dialpad_count','_dialLabel','total_dials','disposition','agent_name','updated_at'];
+    rows.forEach(r=>{ r._dialLabel=dialLabel(r.total_dials); r.total_dials=r.total_dials||0; const bc=clBookCounts(r.phone_code); BK_CLIENTS.forEach(c=>{r['_c_'+c]=bc.per[c];}); r._other=bc.other; r._tot=bc.total; });
+    BK_CLIENTS.forEach(c=>keys.push('_c_'+c)); keys.push('_other','_tot');
     const esc=v=>{ const s=(v===undefined||v===null)?'':String(v); return (s.includes(',')||s.includes('"')||s.includes('\n')) ? '"'+s.replace(/"/g,'""')+'"' : s; };
     const lines=[headers.join(',')];
     rows.forEach(r=>lines.push(keys.map(k=>esc(r[k])).join(',')));
@@ -15716,13 +15871,46 @@ async function clExportCSV(){
   }
   if(btn){ btn.disabled=false; btn.textContent='⬇ Export CSV'; }
 }
+function clAdminExtraHeads(){
+  return '<th style="min-width:110px">Dial Count</th><th>Total Dials</th>'+BK_CLIENTS.map(c=>'<th>'+h(c)+'</th>').join('')+'<th>Other Clients</th><th>Total Clients</th>';
+}
+function clAdminExtraCells(l){
+  const n=Number(l.total_dials)||0, bc=clBookCounts(l.phone_code);
+  const cc=v=>'<td style="text-align:center">'+(v?'<b style="color:#3730a3">'+v+'</b>':'<span style="color:#ccc">0</span>')+'</td>';
+  return '<td style="font-size:11px;font-weight:700;color:'+(n===0?'#065f46':'#92400e')+'">'+dialLabel(n)+'</td><td style="text-align:center;font-weight:700">'+n+'</td>'
+    +BK_CLIENTS.map(c=>cc(bc.per[c])).join('')+cc(bc.other)+'<td style="text-align:center;font-weight:800">'+bc.total+'</td>';
+}
+// Assign the leads that match the current All Leads filters (incl. the Dial Count filter) to one agent
+async function clAssignFiltered(){
+  const CL=S.cl||{}, agId=document.getElementById('cl-asg-agent')?.value;
+  if(!agId){ showToast('Select an agent first','error'); return; }
+  const ag=(S.users||[]).find(u=>u.id===agId);
+  const total=CL.total||0; if(!total){ showToast('No leads match the current filters','error'); return; }
+  const want=parseInt(document.getElementById('cl-asg-n')?.value)||total, n=Math.min(want,total);
+  if(!confirm('Assign '+n.toLocaleString()+' filtered lead'+(n===1?'':'s')+' to '+(ag?.name||'this agent')+'?')) return;
+  showToast('Assigning '+n.toLocaleString()+' leads…');
+  try{
+    const ids=[];
+    while(ids.length<n){
+      const {data,error}=await clBuildQ('id',true).order('id').range(ids.length,Math.min(ids.length+999,n-1));
+      if(error) throw error; if(!data||!data.length) break; data.forEach(r=>ids.push(r.id));
+    }
+    const now=new Date().toISOString(); let done=0;
+    for(let i=0;i<ids.length;i+=500){
+      const {error}=await sb.from('crm_leads').update({agent_id:agId,agent_name:ag?.name||null,updated_at:now}).in('id',ids.slice(i,i+500));
+      if(error) throw error; done+=Math.min(500,ids.length-i);
+    }
+    showToast('✓ '+done.toLocaleString()+' leads assigned to '+(ag?.name||'agent'));
+    if(S.cl) S.cl.counts=null; if(CL.mode==='roundrobin')clRoundRobin(0,true);else clLoadPage(0,true);
+  }catch(e){ showToast('Assign error: '+(e.message||e),'error'); }
+}
 async function clCountQ(isAdm){ const{count}=await clApplyFilters(sb.from('crm_leads').select('*',{count:'exact',head:true}),isAdm); return count||0; }
 
 async function clLoadPage(page,isAdmin,opts){
   const silent = !!(opts&&opts.silent);
   const CL=S.cl||{}; CL.page=page;
-  const cols=isAdmin?12:11;
-  const SEL='id,parent_name,child_name,phone_code,Zone,Country,grade,ethnicity,data_set,dialpad_count,disposition,agent_name';
+  const cols=isAdmin?21:11;
+  const SEL='id,parent_name,child_name,phone_code,Zone,Country,grade,ethnicity,data_set,dialpad_count,total_dials,disposition,agent_name';
   const asc=CL.mode==='oldest';
   const tbody=document.getElementById('cl-body');
   if(!silent && tbody) tbody.innerHTML=`<tr><td colspan="${cols}" style="text-align:center;padding:2rem;color:var(--text3)">⏳ Loading ${CL.country}...</td></tr>`;
@@ -15766,6 +15954,7 @@ async function clLoadPage(page,isAdmin,opts){
     S._noFreshLeadsDs=CL.filters.ds;
     if(!_renderedForEmpty) render();
   }
+  if(isAdmin) await clEnsureBookMap();
   clRenderTable(CL.leads,page*CL_PAGE,isAdmin,0);
   clUpdatePag(page,CL.leads.length,isAdmin);
 }
@@ -15773,8 +15962,8 @@ async function clLoadPage(page,isAdmin,opts){
 async function clRoundRobin(page,isAdmin,opts){
   const silent = !!(opts&&opts.silent);
   const CL=S.cl||{}; CL.page=page;
-  const cols=isAdmin?12:11;
-  const SEL='id,parent_name,child_name,phone_code,Zone,Country,grade,ethnicity,data_set,dialpad_count,disposition,agent_name';
+  const cols=isAdmin?21:11;
+  const SEL='id,parent_name,child_name,phone_code,Zone,Country,grade,ethnicity,data_set,dialpad_count,total_dials,disposition,agent_name';
   const tbody=document.getElementById('cl-body');
   if(!silent && tbody) tbody.innerHTML=`<tr><td colspan="${cols}" style="text-align:center;padding:2rem;color:var(--text3)">⏳ Round Robin...</td></tr>`;
   if(!CL.datasets||!CL.datasets.length){await clLoadPage(page,isAdmin,opts);return;}
@@ -15818,12 +16007,13 @@ async function clRoundRobin(page,isAdmin,opts){
     S._noFreshLeadsDs=CL.filters.ds;
     if(!_renderedForEmpty2) render();
   }
+  if(isAdmin) await clEnsureBookMap();
   clRenderTable(sortedRows,page*CL_PAGE,isAdmin,0);
   clUpdatePag(page,sortedRows.length,isAdmin);
 }
 
 function clRenderTable(rows,offset,isAdmin,elapsed){
-  const CL=S.cl||{}; const cols=isAdmin?12:11;
+  const CL=S.cl||{}; const cols=isAdmin?21:11;
   const tbody=document.getElementById('cl-body');
   if(!tbody)return;
   if(!rows.length){
@@ -15845,7 +16035,7 @@ function clRenderTable(rows,offset,isAdmin,elapsed){
       <td><span style="background:#EDE9FE;color:#7D3C98;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700">${h(l.data_set)||'—'}</span></td>
       <td style="text-align:center">${l.dialpad_count||0}</td>
       <td><span style="background:${db};color:${dc};padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">${d||'Fresh'}</span></td>
-      ${isAdmin?`<td style="font-size:11px;color:var(--text2)">${h(l.agent_name||'Unassigned')}</td>`:''}
+      ${isAdmin?`<td style="font-size:11px;color:var(--text2)">${h(l.agent_name||'Unassigned')}</td>`+clAdminExtraCells(l):''}
     </tr>`;
   }).join('');
 }
@@ -15910,7 +16100,7 @@ function clSetMode(mode){
 function clApplyFilter(){
   const CL=S.cl||{}; CL.filters={}; CL.page=0;
   S._noFreshLeadsDs=null; // clear any leftover popup flag from a previous empty search
-  const flds={parent:'cl-p',child:'cl-ch',phone:'cl-ph',zone:'cl-zone',grade:'cl-grade',eth:'cl-eth',ds:'cl-ds',disp:'cl-disp',agent:'cl-agent'};
+  const flds={parent:'cl-p',child:'cl-ch',phone:'cl-ph',zone:'cl-zone',grade:'cl-grade',eth:'cl-eth',ds:'cl-ds',disp:'cl-disp',agent:'cl-agent',dials:'cl-dials'};
   Object.entries(flds).forEach(([k,id])=>{const el=document.getElementById(id);if(el?.value)CL.filters[k]=el.value;});
   if(CL.mode==='roundrobin')clRoundRobin(0,isSA());else clLoadPage(0,isSA());
 }
@@ -15918,7 +16108,7 @@ function clApplyFilter(){
 function clClear(){
   const CL=S.cl||{}; CL.filters={}; CL.page=0;
   ['cl-p','cl-ch','cl-ph'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
-  ['cl-zone','cl-grade','cl-eth','cl-ds','cl-disp','cl-agent'].forEach(id=>{const el=document.getElementById(id);if(el)el.selectedIndex=0;});
+  ['cl-zone','cl-grade','cl-eth','cl-ds','cl-disp','cl-agent','cl-dials'].forEach(id=>{const el=document.getElementById(id);if(el)el.selectedIndex=0;});
   if(CL.mode==='roundrobin')clRoundRobin(0,isSA());else clLoadPage(0,isSA());
 }
 
