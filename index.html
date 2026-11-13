@@ -554,7 +554,7 @@ tr:last-child td{border-bottom:none;}tr:hover td{background:#fafafa;cursor:point
 // login screen and logged to the console, so a quick hard refresh + glance
 // tells him definitively whether Netlify is actually serving THIS file yet,
 // instead of guessing at whether a reported bug was ever really fixed.
-const BUILD_STAMP='2026-11-06-dup-check-db3';
+const BUILD_STAMP='2026-11-13-import-disp-cr';
 console.log('[EdvantEdge CRM] build', BUILD_STAMP);
 const SB_URL='https://qyubbieikviesfcorusq.supabase.co';
 const SB_KEY=['eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF5','dWJiaWVpa3ZpZXNmY29ydXNxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU0OTkzNjEsImV4cCI6MjA5MTA3NTM2MX0.t_4mZWd_Qo1KHrGN9imMnnpn6UkLtLFrOeI2Q9lPD08'].join('');
@@ -604,6 +604,10 @@ const RESTRICTED_KITTY_DISPS=[
   'Future Potential (outside 30 days)','Hot','Interested (within 15 days)',
   'Invalid (Wrong Number/Incorrect Number)','On Vacation','Partially Booked'
 ];
+// Snapshot of the built-in dispositions (category + contact type). Dispositions added later in
+// Settings are layered on top of this; the built-in ones keep their behaviour.
+const _BASE_DISP_CAT={},_BASE_DISP_CONTACT={},_DISP_CAT_OVERRIDE={};
+Object.keys(DISPS).forEach(k=>{_BASE_DISP_CAT[k]=DISPS[k].cat;_BASE_DISP_CONTACT[k]=DISPS[k].contact;});
 const ALL_DISPS=Object.keys(DISPS);
 const WORKABLE_DISPS=ALL_DISPS.filter(d=>DISPS[d].cat==='workable');
 const NONWORK_DISPS=ALL_DISPS.filter(d=>DISPS[d].cat==='nonworkable');
@@ -1625,6 +1629,7 @@ function _renderBody(){
     const _hrmsP=['hrms_dash','hrms_myleaves','hrms_slip','hrms_overview','hrms_att','hrms_ledger','hrms_salaryhistory','hrms_increment'];
     if(S.user&&_hrmsP.includes(S.page)&&!_hrmsAttLoadAttempted){hrmsLoadAllAtt().then(()=>render()).catch(()=>{});}
     try{ labelTableCells(); }catch(e){}
+    if(S.user&&S.page==='dashboard'&&typeof crEnsure==='function') setTimeout(crEnsure,60);
     // Auto-start/stop Dialpad live poll when admin navigates to/from agents page
     if(S.user && S.page==='agents' && isSA()){
       setTimeout(()=>{ try{startDpLivePoll();}catch(e){} }, 100);
@@ -2758,43 +2763,361 @@ function renderExport(){
   </div>`;
 }
 
+// ══════════════════════════════════════════════════════════════════
+// IMPORT DATA — two stages (modelled on the reference import.php)
+//   Stage 1: add a file → every row is checked (Unique / Duplicate / Wrong number / Indian number)
+//   Stage 2: review the checked rows → upload (duplicates are never imported)
+// ══════════════════════════════════════════════════════════════════
+let _imp={stage:1,busy:'',file:'',rows:[],cnt:{unique:0,duplicate:0,wrong:0,indian:0},filter:'',incBad:true,
+          bookMap:{},dialMap:{},batchId:'',progress:null,done:null,agentMap:{}};
+
+// Column names we understand (first matching header wins). Order = fixed order when a file has no header row.
+const IMP_FIELDS=['country','parent_name','child_name','grade','mobile','email','city','timezone','ethnicity','disposition'];
+const IMP_SYN={
+  country:['country','region'],
+  parent_name:['parent_name','parent name','parent','parentname','name','first_name'],
+  child_name:['child_name','child name','child','childname','student','student_name'],
+  grade:['grade','class','std','standard'],
+  mobile:['mobile','mobile number','mobile_number','mobile_no','phone','phonenumber','phone number','phone_number','phone_no','contact'],
+  email:['email','email_address','emailaddress','e-mail'],
+  city:['city','location','area'],
+  timezone:['time zone','timezone','time_zone','zone'],
+  ethnicity:['ethnicity','ethnic'],
+  disposition:['dispositions','disposition','disp'],
+  data_set:['data_set','dataset','data set','packet','data_packet','data packet'],
+  alt_phone:['alt_phone','alt phone','alt_mobile','altphone','alternate_phone','phone2'],
+  agent:['agent','agent_id','agent_name','assigned_to','agentname'],
+  phone_code:['phone_code','phonecode','country_code']
+};
+function _impKey(h){return String(h||'').trim().toLowerCase().replace(/[_\s]+/g,' ');}
+function impMapHeaders(row){
+  // returns {field:index} when the row looks like a header row (must contain a mobile/phone column), else null
+  const map={};
+  const heads=row.map(_impKey);
+  Object.keys(IMP_SYN).forEach(f=>{
+    for(const syn of IMP_SYN[f]){ const i=heads.indexOf(_impKey(syn)); if(i>=0){ map[f]=i; break; } }
+  });
+  return map.mobile!==undefined?map:null;
+}
+// digits only, "00" international prefix removed
+function impNorm(raw){ let d=String(raw==null?'':raw).replace(/\D/g,''); if(d.startsWith('00')) d=d.slice(2); return d; }
+// Mobile rules: Australia 61 4… (11) · USA/Canada 1 then 2-9… (11) · UK 44 7… (12) · 91… = Indian · else wrong
+function impClassify(n){
+  if(!n) return 'wrong';
+  if(/^614\d{8}$/.test(n)) return 'unique';
+  if(/^1[2-9]\d{9}$/.test(n)) return 'unique';
+  if(/^447\d{9}$/.test(n)) return 'unique';
+  if(n.startsWith('91')) return 'indian';
+  return 'wrong';
+}
+function impCountryFromNorm(n){
+  if(/^614\d{8}$/.test(n)) return 'Australia';
+  if(/^1[2-9]\d{9}$/.test(n)) return 'USA';
+  if(/^447\d{9}$/.test(n)) return 'United Kingdom';
+  if(n.startsWith('91')) return 'India';
+  return '';
+}
+// Blank-field defaults (same as the reference): parent → Parent, child → Student, email → email@example.com
+function impClean(f){
+  f.parent_name=String(f.parent_name||'').trim()||'Parent';
+  let c=String(f.child_name||'').trim();
+  if(!c||/^(child|your child)$/i.test(c)) c='Student';
+  f.child_name=c;
+  f.email=String(f.email||'').trim()||'email@example.com';
+  ['country','grade','city','timezone','ethnicity','disposition','data_set','alt_phone','agent'].forEach(k=>{f[k]=String(f[k]||'').trim();});
+  return f;
+}
+let _impXlsxPromise=null;
+function impLoadXlsx(){
+  if(window.XLSX) return Promise.resolve(window.XLSX);
+  if(_impXlsxPromise) return _impXlsxPromise;
+  _impXlsxPromise=new Promise((res,rej)=>{
+    const s=document.createElement('script');
+    s.src='https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+    s.onload=()=>window.XLSX?res(window.XLSX):rej(new Error('Excel reader did not load'));
+    s.onerror=()=>{_impXlsxPromise=null;rej(new Error('Could not load the Excel reader (check your internet) — save the file as CSV and try again'));};
+    document.head.appendChild(s);
+  });
+  return _impXlsxPromise;
+}
+async function impReadRows(file){
+  const name=(file.name||'').toLowerCase();
+  if(name.endsWith('.xlsx')||name.endsWith('.xls')){
+    const X=await impLoadXlsx();
+    const wb=X.read(await file.arrayBuffer(),{type:'array'});
+    const ws=wb.Sheets[wb.SheetNames[0]];
+    return X.utils.sheet_to_json(ws,{header:1,raw:false,defval:''}).map(r=>r.map(v=>String(v==null?'':v)));
+  }
+  let text=await file.text();
+  if(text.charCodeAt(0)===0xFEFF) text=text.slice(1);
+  const first=(text.split(/\r?\n/)[0]||'');
+  if(first.indexOf('\t')>=0&&first.indexOf(',')<0) return text.replace(/\r\n?/g,'\n').split('\n').filter(l=>l.trim()).map(l=>l.split('\t'));
+  return parseCSVText(text);
+}
+
+function impReset(){ _imp={stage:1,busy:'',file:'',rows:[],cnt:{unique:0,duplicate:0,wrong:0,indian:0},filter:'',incBad:true,bookMap:{},dialMap:{},batchId:'',progress:null,done:null,agentMap:{}}; render(); }
+function impDrop(e){ e.preventDefault(); e.currentTarget.style.borderColor='#ccc'; const f=e.dataTransfer?.files?.[0]; if(f) impSetFile(f); }
+function impPickFile(inp){ const f=inp?.files?.[0]; if(f) impSetFile(f); }
+function impSetFile(f){
+  if(!/\.(csv|txt|xlsx|xls)$/i.test(f.name||'')){ showToast('Please choose a .csv, .txt or .xlsx file','error'); return; }
+  window._impPending=f;
+  const el=document.getElementById('imp-fname'); if(el) el.textContent='📄 '+f.name+' ('+Math.round(f.size/1024)+' KB)';
+  const b=document.getElementById('imp-check-btn'); if(b) b.disabled=false;
+}
+
+// ── Stage 1: read + check ───────────────────────────────────────────
+async function impRunCheck(){
+  const file=window._impPending;
+  if(!file){ showToast('Please choose a file to upload','error'); return; }
+  _imp.busy='Reading file…'; _imp.file=file.name; render();
+  try{
+    const raw=await impReadRows(file);
+    if(!raw.length) throw new Error('No data rows were found in that file.');
+    let map=impMapHeaders(raw[0]), startAt=1;
+    if(!map){ map={}; IMP_FIELDS.forEach((f,i)=>{map[f]=i;}); startAt=0; }   // no header → fixed column order
+    const rows=[]; let rowNo=0;
+    for(let i=startAt;i<raw.length;i++){
+      const r=raw[i]; if(!r||r.every(v=>String(v||'').trim()==='')) continue;
+      const f={}; Object.keys(map).forEach(k=>{ f[k]=r[map[k]]!==undefined?r[map[k]]:''; });
+      let mob=String(f.mobile||'').trim();
+      let code=String(f.phone_code||'').replace(/\D/g,'');
+      let norm=impNorm(mob);
+      // separate short country-code column + local number (e.g. 44 + 7796064407)
+      if(code&&code.length<=4&&norm&&!norm.startsWith(code)&&norm.length<=11) norm=code+norm;
+      impClean(f);
+      rows.push({row_no:++rowNo,country:f.country,parent_name:f.parent_name,child_name:f.child_name,grade:f.grade,mobile:mob,norm,
+        email:f.email,city:f.city,timezone:f.timezone,ethnicity:f.ethnicity,disposition:f.disposition,data_set:f.data_set,alt_phone:f.alt_phone,agent:f.agent,status:''});
+    }
+    if(!rows.length) throw new Error('No data rows were found in that file.');
+    // 1) duplicates inside the file / 2) numbers already in the CRM
+    _imp.busy='Checking numbers against the CRM… (0 / '+rows.length.toLocaleString()+')'; render();
+    const existing=await impFindExisting(rows.map(r=>r.norm).filter(Boolean),(done,total)=>{
+      _imp.busy='Checking numbers against the CRM… ('+done.toLocaleString()+' / '+total.toLocaleString()+')';
+      const el=document.getElementById('imp-busy-txt'); if(el) el.textContent=_imp.busy;
+    });
+    const seen={}, cnt={unique:0,duplicate:0,wrong:0,indian:0};
+    rows.forEach(r=>{
+      const n=r.norm;
+      if(n&&(seen[n]||existing.norms.has(n))) r.status='duplicate';
+      else { r.status=impClassify(n); if(n) seen[n]=true; }
+      cnt[r.status]++;
+    });
+    _imp.dialMap=existing.dials;
+    _imp.rows=rows; _imp.cnt=cnt; _imp.filter=''; _imp.stage=2; _imp.busy=''; _imp.done=null;
+    _imp.batchId='imp_'+new Date().toISOString().slice(0,10).replace(/-/g,'')+'_'+Math.random().toString(36).slice(2,7);
+    await impLoadBookings();
+    render();
+  }catch(e){
+    _imp.busy=''; _imp.stage=1; render();
+    showToast('⚠️ '+(e.message||e),'error');
+  }
+}
+// Look up which of these numbers already exist in crm_leads (phone OR phone_code), in small chunks
+async function impFindExisting(norms,onProgress){
+  const uniq=[...new Set(norms)], norms2=new Set(), dials={};
+  const CH=150; let done=0;
+  const chunks=[]; for(let i=0;i<uniq.length;i+=CH) chunks.push(uniq.slice(i,i+CH));
+  const worker=async()=>{
+    while(chunks.length){
+      const ch=chunks.shift();
+      for(const col of ['phone_code','phone']){
+        try{
+          const {data}=await sb.from('crm_leads').select('phone,phone_code,dialpad_dials').in(col,ch);
+          (data||[]).forEach(r=>{
+            const a=impNorm(r.phone), b=impNorm(r.phone_code);
+            [a,b].forEach(x=>{ if(x){ norms2.add(x); if(r.dialpad_dials!=null) dials[x]=Math.max(dials[x]||0,Number(r.dialpad_dials)||0); } });
+          });
+        }catch(e){ console.warn('impFindExisting',e); }
+      }
+      done+=ch.length; if(onProgress) onProgress(Math.min(done,uniq.length),uniq.length);
+    }
+  };
+  await Promise.all([worker(),worker(),worker(),worker()]);
+  return {norms:norms2,dials};
+}
+// demo bookings per client for the rows shown in the table (first 1,000 of the current view)
+async function impLoadBookings(){
+  const view=impViewRows().slice(0,1000).map(r=>r.norm).filter(Boolean);
+  const uniq=[...new Set(view)], map={}, CH=150;
+  for(let i=0;i<uniq.length;i+=CH){
+    try{
+      const {data}=await sb.from('DEMO-BOOKING').select('phone_code,client').in('phone_code',uniq.slice(i,i+CH));
+      (data||[]).forEach(b=>{ const n=impNorm(b.phone_code); (map[n]=map[n]||{}); map[n][b.client]=(map[n][b.client]||0)+1; });
+    }catch(e){ console.warn('impLoadBookings',e); }
+  }
+  _imp.bookMap=map;
+}
+function impViewRows(){ return _imp.filter?_imp.rows.filter(r=>r.status===_imp.filter):_imp.rows; }
+async function impSetFilter(f){ _imp.filter=f; _imp.busy='Loading…'; render(); await impLoadBookings(); _imp.busy=''; render(); }
+function impToggleBad(cb){ _imp.incBad=!!cb.checked; }
+function impDiscard(){ if(!confirm('Discard this checked file?\nNothing has been imported yet.')) return; impReset(); }
+function impDownloadChecked(){
+  const head=['Row','Country','Parent Name','Child Name','Grade','Mobile','Email','City','Time Zone','Ethnicity','Dispositions','Status'];
+  const lbl={unique:'Unique',duplicate:'Duplicate',wrong:'Wrong number',indian:'Indian number'};
+  const q=v=>'"'+String(v==null?'':v).replace(/"/g,'""')+'"';
+  const csv=[head.map(q).join(',')].concat(_imp.rows.map(r=>[r.row_no,r.country,r.parent_name,r.child_name,r.grade,r.mobile,r.email,r.city,r.timezone,r.ethnicity,r.disposition,lbl[r.status]].map(q).join(','))).join('\n');
+  const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
+  a.download='checked_'+(_imp.file||'import').replace(/\.[^.]+$/,'')+'.csv'; a.click();
+}
+
+// ── Stage 2: upload ────────────────────────────────────────────────
+async function impStartUpload(){
+  if(_imp.busy||_imp.progress) return;
+  const incl=r=> r.status==='unique' || (_imp.incBad&&(r.status==='wrong'||r.status==='indian')&&r.norm);
+  const list=_imp.rows.filter(incl);
+  if(!list.length){ showToast('Nothing to import — every row is a duplicate or has no usable number','error'); return; }
+  // resolve agent names → ids (only if the file had an agent column)
+  const agentMap={};
+  try{
+    if(list.some(r=>r.agent)){
+      const {data:us}=await sb.rpc('list_crm_users');
+      (us||[]).filter(u=>u.role==='agent').forEach(u=>{ agentMap[String(u.name).toLowerCase()]=u.id; agentMap[String(u.id).toLowerCase()]=u.id; });
+    }
+  }catch(e){}
+  const now=new Date().toISOString(), today=now.slice(0,10);
+  const lbl={wrong:'Wrong number',indian:'Indian number'};
+  const leads=list.map((r,i)=>({
+    id:'l_'+Date.now()+'_'+Math.random().toString(36).slice(2,7)+'_'+i,
+    phone:r.norm, phone_code:r.norm, alt_phone:r.alt_phone||'',
+    parent_name:r.parent_name, child_name:r.child_name, grade:r.grade, email:r.email, city:r.city,
+    data_set:r.data_set||'', Zone:r.timezone, Country:normCountry(r.country)||impCountryFromNorm(r.norm), ethnicity:r.ethnicity,
+    disposition:r.disposition||null,
+    agent_id:(r.agent&&agentMap[String(r.agent).toLowerCase()])||null,
+    notes:lbl[r.status]?('Import check: '+lbl[r.status]):null,
+    import_batch_id:_imp.batchId, added_at:today, updated_at:now
+  }));
+  _imp.progress={done:0,total:leads.length,errors:0,msgs:[]}; render();
+  let inserted=0; const BATCH=500;
+  for(let i=0;i<leads.length;i+=BATCH){
+    const batch=leads.slice(i,i+BATCH);
+    try{
+      const {error}=await sb.from('crm_leads').insert(batch);
+      if(error){ _imp.progress.errors+=batch.length; _imp.progress.msgs.push(error.message); }
+      else inserted+=batch.length;
+    }catch(e){ _imp.progress.errors+=batch.length; _imp.progress.msgs.push(e.message); }
+    _imp.progress.done=Math.min(i+BATCH,leads.length);
+    const pct=Math.round(_imp.progress.done/leads.length*100);
+    const bar=document.getElementById('imp-bar'), pt=document.getElementById('imp-pct'), tx=document.getElementById('imp-txt');
+    if(bar) bar.style.width=pct+'%'; if(pt) pt.textContent=pct+'%'; if(tx) tx.textContent=_imp.progress.done.toLocaleString()+' of '+leads.length.toLocaleString()+' leads';
+  }
+  // same follow-ups as the previous importer so new data shows up everywhere
+  if(S.cl){S.cl.counts=null;S.cl.datasets=[];S.cl.leads=[];}
+  if(inserted>0){
+    try{ await rebuildFilterCache(); }catch(e){ console.error('post-import rebuildFilterCache failed:',e); }
+    try{
+      const newSets=[...new Set(leads.map(l=>l.data_set).filter(Boolean))];
+      if(newSets.length) await sb.from('crm_datasets').upsert(newSets.map(name=>({name,active:true})),{onConflict:'name',ignoreDuplicates:true});
+    }catch(e){ console.error('post-import crm_datasets sync failed:',e); }
+  }
+  _imp.done={inserted,errors:_imp.progress.errors,msgs:[...new Set(_imp.progress.msgs)],skipped:_imp.cnt.duplicate};
+  _imp.progress=null; render();
+}
+
+// ── Page ───────────────────────────────────────────────────────────
+function impStepper(n){
+  const st=(i,l)=>`<div style="display:flex;align-items:center;gap:8px;padding:6px 14px;border-radius:20px;font-size:12px;font-weight:700;${n===i?'background:var(--red,#c0392b);color:#fff':n>i?'background:#d1fae5;color:#065f46':'background:#eef1f6;color:#8a9ab0'}"><span>${n>i?'✓':i}</span>${l}</div>`;
+  return `<div style="display:flex;gap:10px;margin:0 0 16px;flex-wrap:wrap">${st(1,'Add file')}${st(2,'Check &amp; upload')}</div>`;
+}
+function impStatusPill(s){
+  const m={unique:['Unique','#d1fae5','#065f46'],duplicate:['Duplicate','#fef3c7','#92400e'],wrong:['Wrong number','#fee2e2','#991b1b'],indian:['Indian number','#e0e7ff','#3730a3']}[s]||['—','#eee','#555'];
+  return `<span style="background:${m[1]};color:${m[2]};font-size:11px;font-weight:700;padding:2px 9px;border-radius:9px;white-space:nowrap">${m[0]}</span>`;
+}
 function renderImport(){
-  return`<div class="pg-title" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">Import Leads
-    <button class="btn btn-sm btn-outline" onclick="render()" style="font-size:12px;padding:5px 12px">↻ Refresh</button>
+  const title=`<div class="pg-title" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">Import Data
+    <span style="font-size:12px;font-weight:400;color:var(--text2)">Add a file, review the check, then upload.</span></div>`;
+  if(_imp.busy&&_imp.stage===1||(_imp.busy&&_imp.stage!==2)){
+    return title+impStepper(1)+`<div class="card" style="text-align:center;padding:40px"><div style="font-size:30px">⏳</div><div id="imp-busy-txt" style="margin-top:8px;font-weight:600">${h(_imp.busy)}</div><div style="font-size:12px;color:var(--text2);margin-top:6px">Checking numbers, duplicates, client bookings &amp; dials…</div></div>`;
+  }
+  if(_imp.stage===1){
+    return title+impStepper(1)+`
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px;align-items:start">
+      <div class="card">
+        <h3 style="margin:0 0 6px">Stage 1 – Add file</h3>
+        <p style="margin:0 0 14px;color:var(--text2);font-size:13px">Upload a .csv, .txt or .xlsx file. Nothing is saved to your leads yet – we only check it first.</p>
+        <div style="border:2px dashed #ccc;border-radius:var(--lg);padding:2.2rem;text-align:center;cursor:pointer"
+          onclick="document.getElementById('imp-file').click()"
+          ondragover="event.preventDefault();this.style.borderColor='var(--red)'"
+          ondragleave="this.style.borderColor='#ccc'" ondrop="impDrop(event)">
+          <div style="font-size:34px;margin-bottom:8px">📂</div>
+          <div style="font-size:15px;font-weight:700">Click or drag &amp; drop your file</div>
+          <div style="font-size:12px;color:var(--text2);margin-top:4px">CSV, TXT or XLSX · first row should be the column headers</div>
+          <div id="imp-fname" style="margin-top:10px;font-size:13px;font-weight:700;color:#065f46"></div>
+        </div>
+        <input type="file" id="imp-file" accept=".csv,.txt,.xlsx,.xls" style="display:none" onchange="impPickFile(this)"/>
+        <div style="display:flex;justify-content:flex-end;margin-top:16px"><button class="btn" id="imp-check-btn" onclick="impRunCheck()" disabled>✔ Add file &amp; check</button></div>
+      </div>
+      <div class="card">
+        <h3 style="margin:0 0 6px">What gets imported</h3>
+        <p style="margin:0 0 10px;color:var(--text2);font-size:13px">These columns are read from your file:</p>
+        <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px">${['Country','Parent Name','Child Name','Grade','Mobile','Email','City','Time Zone','Ethnicity','Dispositions'].map(x=>`<span style="background:#eef3fb;color:#2c4a7c;border-radius:9px;padding:2px 10px;font-size:12px;font-weight:600">${x}</span>`).join('')}</div>
+        <p style="margin:0 0 10px;color:var(--text2);font-size:12px">Also read when present: <b>Data Set</b>, <b>Alt Phone</b>, <b>Agent</b>.</p>
+        <table style="width:100%;font-size:13px;border-collapse:collapse">
+          <tr style="text-align:left;color:var(--text2)"><th style="padding:4px 0">If this is…</th><th>We add</th></tr>
+          <tr><td style="padding:4px 0">Parent name blank</td><td><b>Parent</b></td></tr>
+          <tr><td style="padding:4px 0">Child blank, "Child" or "Your Child"</td><td><b>Student</b></td></tr>
+          <tr><td style="padding:4px 0">Email blank</td><td><b>email@example.com</b></td></tr>
+        </table>
+        <p style="margin:12px 0 0;font-size:12px;color:var(--text2)">Mobile rules: <b>Australia</b> 61 4… (11 digits) · <b>USA/Canada</b> 1 then 2-9… (11 digits) · <b>UK</b> 44 7… (12 digits) · starts with <b>91</b> = Indian number · everything else = wrong number.</p>
+        <button class="btn btn-outline btn-sm" style="margin-top:12px" onclick="downloadImportSample()">⬇ Download sample CSV</button>
+      </div>
+    </div>`;
+  }
+  // ── stage 2 ──
+  if(_imp.done){
+    const d=_imp.done;
+    return title+impStepper(2)+`<div class="card" style="text-align:center;padding:30px">
+      <div style="font-size:40px">${d.errors&&!d.inserted?'❌':'✅'}</div>
+      <h3 style="margin:8px 0">${d.inserted?'Import complete':'Import failed'}</h3>
+      <p style="color:var(--text2)"><b>${d.inserted.toLocaleString()}</b> leads were added. ${d.skipped?`<b>${d.skipped.toLocaleString()}</b> duplicates were skipped.`:'Duplicates were skipped.'}</p>
+      ${d.errors?`<div style="background:#fee2e2;color:#991b1b;border-radius:8px;padding:8px 12px;font-size:12px;margin:10px auto;max-width:520px"><b>${d.errors.toLocaleString()}</b> rows had a database error: ${h(d.msgs.join(' | '))}</div>`:''}
+      <div style="display:flex;gap:10px;justify-content:center;margin-top:14px"><button class="btn" onclick="goPage('leads')">Open All Leads</button><button class="btn btn-outline" onclick="impReset()">Import another file</button></div></div>`;
+  }
+  const c=_imp.cnt, f=_imp.filter, rows=impViewRows().slice(0,1000);
+  const importable=c.unique+(_imp.incBad?c.wrong+c.indian:0);
+  const stat=(l,v,col)=>`<div class="card" style="padding:12px 16px"><div style="font-size:11px;color:var(--text2);font-weight:700;text-transform:uppercase">${l}</div><div style="font-size:24px;font-weight:800;color:${col}">${v.toLocaleString()}</div></div>`;
+  const pill=(k,l,n)=>`<a href="javascript:void(0)" onclick="impSetFilter('${k}')" style="padding:6px 14px;border-radius:16px;font-size:12px;font-weight:700;text-decoration:none;${f===k?'background:#1a2535;color:#fff':'background:#eef1f6;color:#44546a'}">${l} <span style="opacity:.7">${n.toLocaleString()}</span></a>`;
+  const tr=rows.map(r=>{
+    const bm=_imp.bookMap[r.norm]||{}; let tc=0;
+    const cells=BK_CLIENTS.map(cl=>{ const v=bm[cl]||0; tc+=v; return `<td style="text-align:center">${v?`<span style="background:#e0e7ff;color:#3730a3;font-weight:700;border-radius:8px;padding:1px 8px">${v}</span>`:'<span style="color:#ccc">0</span>'}</td>`; }).join('');
+    return `<tr><td style="color:var(--text2)">${r.row_no}</td><td>${h(r.country)}</td><td>${h(r.parent_name)}</td><td>${h(r.child_name)}</td><td>${h(r.grade)}</td><td><b>${h(r.mobile)}</b></td><td>${h(r.email)}</td><td>${h(r.city)}</td><td>${h(r.timezone)}</td><td>${h(r.ethnicity)}</td><td>${h(r.disposition)}</td>${cells}<td style="text-align:center"><b>${tc}</b></td><td style="text-align:center"><b>${_imp.dialMap[r.norm]||0}</b></td><td>${impStatusPill(r.status)}</td></tr>`;
+  }).join('');
+  const th=['#','Country','Parent Name','Child Name','Grade','Mobile','Email','City','Time Zone','Ethnicity','Dispositions'].concat(BK_CLIENTS,['Total Clients','Total Dials','Status']).map(x=>`<th style="padding:8px 10px;text-align:left;font-size:11px;white-space:nowrap;background:#f4f6fa">${x}</th>`).join('');
+  const prog=_imp.progress;
+  return title+impStepper(2)+`
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:14px">
+    ${stat('Unique',c.unique,'#065f46')}${stat('Duplicate (will be skipped)',c.duplicate,'#92400e')}${stat('Wrong number',c.wrong,'#991b1b')}${stat('Indian number',c.indian,'#3730a3')}
   </div>
-  <div class="alert alert-info">Duplicate phone numbers are automatically detected and skipped. A file of skipped duplicates will be downloaded separately.</div>
-
-  <div class="card" style="margin-bottom:14px;background:#EFF6FF;border:1px solid #BFDBFE">
-    <div style="font-size:14px;font-weight:700;color:#1E40AF;margin-bottom:6px">📋 Download Sample CSV Template</div>
-    <div style="font-size:12px;color:#3730A3;margin-bottom:12px;line-height:1.6">
-      Download the blank template with all correct column headers. Fill in your data and then import it above.<br>
-      <strong>Required:</strong> Phonenumber &nbsp;|&nbsp; <strong>Optional:</strong> Parent Name, Child Name, Phone Code, Alt Phone, Grade, Email, City, Data Set, Zone, Region, Ethnicity
-    </div>
-    <button class="btn btn-green" onclick="downloadImportSample()" style="font-size:13px;padding:8px 18px">⬇ Download Sample CSV Template</button>
-  </div>
-
   <div class="card">
-    <div style="border:2px dashed #ccc;border-radius:var(--lg);padding:3rem;text-align:center;cursor:pointer;transition:all .2s"
-      onclick="document.getElementById('csv-inp').click()"
-      ondragover="event.preventDefault();this.style.borderColor='var(--red)'"
-      ondragleave="this.style.borderColor='#ccc'"
-      ondrop="handleDrop(event)">
-      <div style="font-size:36px;margin-bottom:10px">📂</div>
-      <div style="font-size:15px;font-weight:700;margin-bottom:4px">Click or drag & drop CSV file</div>
-      <div style="font-size:13px;color:var(--text2)">Only Phonenumber is required — all other columns are optional</div>
+    <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:10px">
+      <div><h3 style="margin:0 0 2px">Stage 2 – Check &amp; upload</h3>
+        <div style="font-size:12px;color:var(--text2)">${h(_imp.file)} · ${_imp.rows.length.toLocaleString()} rows · demo bookings and dials shown are what is already in the database.</div></div>
+      <button class="btn btn-outline btn-sm" onclick="impDownloadChecked()">⬇ Download checked file</button>
     </div>
-    <input type="file" id="csv-inp" accept=".csv" style="display:none" onchange="handleImport(this)"/>
-    <div id="imp-res" style="margin-top:12px"></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">${pill('','All',_imp.rows.length)}${pill('unique','Unique',c.unique)}${pill('duplicate','Duplicate',c.duplicate)}${pill('wrong','Wrong Number',c.wrong)}${pill('indian','Indian Number',c.indian)}</div>
+    <div style="overflow:auto;max-height:420px;border:1px solid var(--border,#e2e6ed);border-radius:8px${_imp.busy?';opacity:.5':''}">
+      <table style="width:100%;border-collapse:collapse;font-size:12px"><thead style="position:sticky;top:0"><tr>${th}</tr></thead>
+      <tbody>${tr||`<tr><td colspan="${14+BK_CLIENTS.length}" style="text-align:center;padding:24px;color:var(--text2)">No rows in this view.</td></tr>`}</tbody></table>
+    </div>
+    ${(impViewRows().length>1000)?`<p style="font-size:12px;color:var(--text2);margin:8px 0 0">Showing the first 1,000 rows of this view. Every row is still checked and imported – use "Download checked file" to see all of them.</p>`:''}
+    <div style="display:flex;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-top:16px;align-items:center">
+      <div><label style="display:flex;gap:8px;align-items:center;font-size:13px;cursor:pointer"><input type="checkbox" id="incBad" ${_imp.incBad?'checked':''} onchange="impToggleBad(this);render()"><span>Also import wrong &amp; Indian numbers (they are saved with their status marked)</span></label>
+        <div style="font-size:12px;color:var(--text2);margin-top:4px">Duplicates are never imported.</div></div>
+      <div style="display:flex;gap:10px"><button class="btn btn-outline" onclick="impDiscard()" ${prog?'disabled':''}>Cancel</button>
+        <button class="btn" id="startImport" onclick="impStartUpload()" ${prog?'disabled':''}>⬆ Upload all leads (${importable.toLocaleString()})</button></div>
+    </div>
+    ${prog?`<div style="margin-top:16px"><div style="display:flex;justify-content:space-between;margin-bottom:6px"><b>Importing…</b><b id="imp-pct">${Math.round(prog.done/prog.total*100)}%</b></div>
+      <div style="height:10px;background:#eef1f6;border-radius:6px;overflow:hidden"><div id="imp-bar" style="height:100%;width:${Math.round(prog.done/prog.total*100)}%;background:#27ae60;transition:width .2s"></div></div>
+      <div id="imp-txt" style="font-size:12px;color:var(--text2);margin-top:6px">${prog.done.toLocaleString()} of ${prog.total.toLocaleString()} leads</div></div>`:''}
   </div>`;
 }
 
 function downloadImportSample(){
   // Headers EXACTLY match crm_leads column names (case-sensitive)
-  const headers=['phone','parent_name','child_name','phone_code','alt_phone','grade','email','city','data_set','Zone','Country','ethnicity','disposition','agent_id'];
+  const headers=['Country','Parent Name','Child Name','Grade','Mobile','Email','City','Time Zone','Ethnicity','Dispositions','Data Set'];
   const examples=[
-    ['+447700900001','Sarah Johnson','Emily Johnson','+447700900001','','Grade 5','sarah@email.com','London','UK_FB_JUN26','GMT','United Kingdom','South Asian','',''],
-    ['+12025551234','Michael Smith','Jake Smith','+12025551234','','Grade 3','michael@email.com','New York','US_FB_JUN26','EST','USA','South Asian','',''],
-    ['+61412345678','Priya Patel','Arya Patel','+61412345678','','Grade 4','priya@email.com','Sydney','AUS_FB_JUN26','AEST','Australia','South Asian','',''],
+    ['United Kingdom','Sarah Johnson','Emily Johnson','Grade 5','447700900001','sarah@email.com','London','GMT','South Asian','','UK_FB_JUN26'],
+    ['USA','Michael Smith','Jake Smith','Grade 3','12025551234','michael@email.com','New York','EST','South Asian','','US_FB_JUN26'],
+    ['Australia','Priya Patel','Arya Patel','Grade 4','61412345678','priya@email.com','Sydney','AEST','South Asian','','AUS_FB_JUN26'],
   ];
   const csv=[headers,...examples].map(r=>r.map(v=>`"${v}"`).join(',')).join('\n');
   const a=document.createElement('a');
@@ -3090,6 +3413,7 @@ async function editDispositionCat(name, newCat){
   try{
     await sb.from('crm_dispositions').update({cat:newCat}).eq('name',name);
     if(DISPS[name]) DISPS[name].cat=newCat;
+    _DISP_CAT_OVERRIDE[name]=newCat;
     refreshDispArrays();
     // Also update contact classification based on new category
     if(DISPS[name]){
@@ -3117,17 +3441,42 @@ async function loadDispositions(){
   try{
     const {data} = await sb.from('crm_dispositions').select('*').eq('active',true);
     if(data) data.forEach(d=>{ DISPS[d.name]={cat:d.cat,contact:'contact'}; });
+    // A disposition deleted in Settings (active=false) disappears for everyone on the next load
+    if(data&&data.length){ const _act=new Set(data.map(d=>d.name)); Object.keys(DISPS).forEach(k=>{ if(!(k in _BASE_DISP_CAT)&&!_act.has(k)) delete DISPS[k]; }); }
+    _dispLastLoad=Date.now();
     refreshDispArrays();
   }catch(e){}
 }
 
-function refreshDispArrays(){
-  window.WORKABLE_DISPS = Object.keys(DISPS).filter(d=>DISPS[d].cat==='workable');
-  window.COOLING_DISPS  = Object.keys(DISPS).filter(d=>DISPS[d].cat==='cooling');
-  window.NONWORK_DISPS  = Object.keys(DISPS).filter(d=>DISPS[d].cat==='nonworkable');
-  window.BOOKING_DISPS  = Object.keys(DISPS).filter(d=>DISPS[d].cat==='booking');
-  window.ALL_DISPS      = Object.keys(DISPS);
+// NOTE: WORKABLE_DISPS / NONWORK_DISPS / COOLING_DISPS / ALL_DISPS are `const` arrays, so assigning
+// window.X never changed the arrays the CRM actually reads — a disposition added in Settings was
+// saved but never showed up in the agents' dropdown. They are now updated IN PLACE.
+function _dispEffCat(n){
+  if(_DISP_CAT_OVERRIDE[n]) return _DISP_CAT_OVERRIDE[n];
+  if(n in _BASE_DISP_CAT)   return _BASE_DISP_CAT[n];       // built-in: keep original behaviour
+  return DISPS[n]?DISPS[n].cat:null;                          // added in Settings: follow its category
 }
+function _dispSetArr(arr,list){ arr.length=0; list.forEach(x=>arr.push(x)); }
+function refreshDispArrays(){
+  const names=Object.keys(DISPS);
+  _dispSetArr(ALL_DISPS,names);
+  _dispSetArr(WORKABLE_DISPS,names.filter(n=>_dispEffCat(n)==='workable'));
+  _dispSetArr(COOLING_DISPS, names.filter(n=>_dispEffCat(n)==='cooling'));
+  _dispSetArr(NONWORK_DISPS, names.filter(n=>_dispEffCat(n)==='nonworkable'));
+  _dispSetArr(CONTACT_DISPS, names.filter(n=>(n in _BASE_DISP_CONTACT?_BASE_DISP_CONTACT[n]:(DISPS[n]&&DISPS[n].contact))==='contact'));
+  _dispSetArr(NONCONTACT_DISPS,names.filter(n=>(n in _BASE_DISP_CONTACT?_BASE_DISP_CONTACT[n]:(DISPS[n]&&DISPS[n].contact))==='noncontact'));
+  window.WORKABLE_DISPS=WORKABLE_DISPS; window.COOLING_DISPS=COOLING_DISPS; window.NONWORK_DISPS=NONWORK_DISPS; window.ALL_DISPS=ALL_DISPS;
+}
+// Re-read dispositions from Settings whenever the tab regains focus (at most once a minute) so
+// agents who keep the CRM open see new dispositions without a manual refresh.
+let _dispLastLoad=Date.now();
+function _dispAutoRefresh(){
+  if(!S.user||Date.now()-_dispLastLoad<60000) return;
+  _dispLastLoad=Date.now();
+  loadDispositions().catch(()=>{});
+}
+window.addEventListener('focus',_dispAutoRefresh);
+document.addEventListener('visibilitychange',()=>{ if(!document.hidden) _dispAutoRefresh(); });
 
 function renderSettings(){
   return`<div class="pg-title" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">Settings
@@ -9667,6 +10016,21 @@ function renderAllocOverview(){
 
 // ══ CLOSING REPORT — Dashboard ═══════════════════════════════
 var _crBookings=null,_crDate=null,_crLoading=false;
+// Today's date in IST (YYYY-MM-DD) — the Closing Report always opens on this date.
+function crToday(){return new Date(new Date().getTime()+5.5*3600000).toISOString().slice(0,10);}
+// Called after every dashboard paint: makes sure the date box shows a date (today unless the
+// user picked another one) and that the report body is filled instead of stuck on "Loading…".
+function crEnsure(){
+  try{
+    var body=document.getElementById('cr-body-dash');
+    if(!body||_crLoading)return;
+    var d=_crDate||crToday();
+    var inp=document.getElementById('cr-date-input');
+    if(inp&&inp.value!==d)inp.value=d;
+    if(_crDate===d&&_crBookings){ if(!body.querySelector('.cr-section'))crRender(); }
+    else crLoad(d);
+  }catch(e){}
+}
 var _CY_SET=new Set(['codyoung','codeyoung','smartowl','smart owl']);
 function crIsCodeyoung(b){return _CY_SET.has((b.client||'').toLowerCase().trim());}
 function crRegion(country){var c=(country||'').toLowerCase();if(c.includes('australia')||c==='aus'||c==='au')return'AUS';if(c.includes('united kingdom')||c==='uk'||c.includes('britain'))return'UK';if(c.includes('usa')||c.includes('united states')||c==='us'||c.includes('canada'))return'US';if(c.includes('uae')||c.includes('united arab')||c.includes('middle east')||c.includes('dubai')||c.includes('abu dhabi'))return'UAE';return'ME';}
@@ -9834,12 +10198,39 @@ function crRender(){
   function uCell(v,col){return v?'<span style="background:'+clBg(col)+';color:'+clColor(col)+';font-weight:800;padding:2px 9px;border-radius:8px;font-size:11px">'+v+'</span>':'<span style="color:#ddd">—</span>';}
   function numCell(v,col){return v?'<b style="color:'+(col||'#1a2535')+'">'+v+'</b>':'<span style="color:#ddd">—</span>';}
 
+  // Country per agent (from this day's DS forms + D-Day demos, each booking counted once)
+  function crCtryLabel(c){
+    var x=String(c||'').trim(),l=x.toLowerCase();
+    if(!l)return'—';
+    if(l.indexOf('australia')>=0||l==='aus'||l==='au')return'Australia';
+    if(l.indexOf('united kingdom')>=0||l==='uk'||l.indexOf('britain')>=0||l==='gb')return'UK';
+    if(l.indexOf('canada')>=0)return'Canada';
+    if(l==='usa'||l.indexOf('united states')>=0||l==='us')return'USA';
+    if(l.indexOf('uae')>=0||l.indexOf('united arab')>=0||l.indexOf('dubai')>=0)return'UAE';
+    if(l.indexOf('india')>=0)return'India';
+    return x;
+  }
+  var _agC={},_agSeen={};
+  [].concat(dsRows,ddayRows).forEach(function(b){
+    if(!b.agent)return;
+    var key=b.agent+'|'+(b.id||Math.random());
+    if(_agSeen[key])return;_agSeen[key]=1;
+    var m=_agC[b.agent]||(_agC[b.agent]={}),k=crCtryLabel(b.country);
+    m[k]=(m[k]||0)+1;
+  });
+  function agCtryHtml(ag){
+    var m=_agC[ag];if(!m)return'';
+    return '<div style="margin-top:3px;display:flex;gap:4px;flex-wrap:wrap">'+Object.keys(m).sort(function(a,b){return m[b]-m[a];}).map(function(k){
+      return '<span style="background:#eef3fb;color:#2c4a7c;border-radius:9px;padding:1px 7px;font-size:10px;font-weight:700;white-space:nowrap">🌍 '+crH(k)+' · '+m[k]+'</span>';
+    }).join('')+'</div>';
+  }
+
   var uRows=sorted.map(function(ag){
     var d=uMap[ag]||{dsTotal:0,dsCY:0,dsCO:0,dsTU:0,dsVE:0,dsJT:0,dsEV:0,dday:0,ddCY:0,ddCO:0,ddTU:0,ddVE:0,ddJT:0,ddEV:0,done:0};
     var cp=crConv(d.done,d.dday);
     var fade=d.dsTotal===0&&d.dday===0?'opacity:.38':'';
     return '<tr style="'+fade+'">'
-      +'<td>'+crH(ag)+'</td>'
+      +'<td>'+crH(ag)+agCtryHtml(ag)+'</td>'
       +'<td>'+numCell(d.dsTotal||0,'')+'</td>'
       +'<td>'+uCell(d.dsCY,'#d4820a')+'</td>'
       +'<td>'+uCell(d.dsCO,'#2471a3')+'</td>'
@@ -9886,7 +10277,7 @@ function crRender(){
     var cpCol=cp>=70?'#00956e':cp>=40?'#c97f00':'#c0392b';
     var fade=d.dsTotal===0&&d.dday===0?'opacity:.38':'';
     return '<tr style="'+fade+'">'
-      +'<td style="font-weight:700">'+crH(ag)+'</td>'
+      +'<td style="font-weight:700">'+crH(ag)+agCtryHtml(ag)+'</td>'
       +'<td style="text-align:center">'+numCell(d.dsTotal,'#f5c518')+'</td>'
       +'<td style="text-align:center">'+numCell(d.dday,'#1a2535')+'</td>'
       +'<td style="text-align:center">'+numCell(d.done,'#1a8a5a')+'</td>'
@@ -10275,7 +10666,7 @@ function renderSADash(){
     +'</div>'
     +'<div id="today-demo-schedule"><div style="color:var(--text3);font-size:12px;padding:8px 0;text-align:center">⏳ Loading demo schedule…</div></div>'
     +'</div>'
-    +(isPartnerAdmin()?'':'<div class="cr-card">'+'<div class="cr-top">'+'<span class="cr-top-title">📋 Closing Report</span>'+'<input type=\"date\" id=\"cr-date-input\" onchange=\"crLoad(this.value)\" style=\"padding:4px 9px;border:none;border-radius:7px;font-size:11px;font-weight:700;background:rgba(255,255,255,.15);color:#fff;cursor:pointer;outline:none\">'+'<button onclick=\"crLoad(document.getElementById(\'cr-date-input\').value)\" style=\"padding:4px 12px;background:rgba(255,255,255,.18);color:#fff;border:none;border-radius:8px;font-size:11px;font-weight:700;cursor:pointer\">↻</button>'+'<div class="cr-top-chips">'+'<div class="cr-chip"><span class="cn" id="cr-chip-ds" style="color:#f5c518">—</span><span>DS</span></div>'+'<div class="cr-chip"><span class="cn" id="cr-chip-aus" style="color:#7ecfbd">—</span><span>AUS</span></div>'+'<div class="cr-chip"><span class="cn" id="cr-chip-uk" style="color:#90bef5">—</span><span>UK</span></div>'+'<div class="cr-chip"><span class="cn" id="cr-chip-us" style="color:#c9a0f0">—</span><span>US</span></div>'+'<div class="cr-chip"><span class="cn" id="cr-chip-uae" style="color:#f5a623">—</span><span>🇦🇪 UAE</span></div>'+'<div class="cr-chip"><span class="cn" id="cr-chip-dd" style="color:#7ecfbd">—</span><span>D-Day</span></div>'+'<div class="cr-chip"><span class="cn" id="cr-chip-done" style="color:#1a8a5a">—</span><span>Done</span></div>'+'</div></div>'+'<div id="cr-body-dash"><div style="color:var(--text3);font-size:12px;padding:16px;text-align:center">⏳ Loading…</div></div>'+'</div>')
+    +(isPartnerAdmin()?'':'<div class="cr-card">'+'<div class="cr-top">'+'<span class="cr-top-title">📋 Closing Report</span>'+'<input type=\"date\" id=\"cr-date-input\" value=\"'+(_crDate||crToday())+'\" onchange=\"crLoad(this.value)\" style=\"padding:4px 9px;border:none;border-radius:7px;font-size:11px;font-weight:700;background:rgba(255,255,255,.15);color:#fff;cursor:pointer;outline:none\">'+'<button onclick=\"crLoad(document.getElementById(\'cr-date-input\').value)\" style=\"padding:4px 12px;background:rgba(255,255,255,.18);color:#fff;border:none;border-radius:8px;font-size:11px;font-weight:700;cursor:pointer\">↻</button>'+'<div class="cr-top-chips">'+'<div class="cr-chip"><span class="cn" id="cr-chip-ds" style="color:#f5c518">—</span><span>DS</span></div>'+'<div class="cr-chip"><span class="cn" id="cr-chip-aus" style="color:#7ecfbd">—</span><span>AUS</span></div>'+'<div class="cr-chip"><span class="cn" id="cr-chip-uk" style="color:#90bef5">—</span><span>UK</span></div>'+'<div class="cr-chip"><span class="cn" id="cr-chip-us" style="color:#c9a0f0">—</span><span>US</span></div>'+'<div class="cr-chip"><span class="cn" id="cr-chip-uae" style="color:#f5a623">—</span><span>🇦🇪 UAE</span></div>'+'<div class="cr-chip"><span class="cn" id="cr-chip-dd" style="color:#7ecfbd">—</span><span>D-Day</span></div>'+'<div class="cr-chip"><span class="cn" id="cr-chip-done" style="color:#1a8a5a">—</span><span>Done</span></div>'+'</div></div>'+'<div id="cr-body-dash"><div style="color:var(--text3);font-size:12px;padding:16px;text-align:center">⏳ Loading…</div></div>'+'</div>')
     +'<div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-bottom:8px">'
     +'<span style="font-size:12px;font-weight:700;color:var(--text2)">Activity:</span>'
     +['today','week','mtd'].map(function(p){var lbl={today:'Today',week:'This Week',mtd:'MTD'}[p];var ac=(S.pillPeriod||'today')===p;return '<button onclick="setPillPeriod(\''+p+'\')" style="padding:6px 14px;border-radius:14px;font-size:11px;font-weight:700;cursor:pointer;'+(ac?'background:var(--red);color:#fff;border:2px solid var(--red)':'background:#fff;color:#333;border:2px solid #ddd')+'">'+lbl+'</button>';}).join('')
