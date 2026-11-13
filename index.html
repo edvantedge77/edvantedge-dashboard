@@ -554,7 +554,7 @@ tr:last-child td{border-bottom:none;}tr:hover td{background:#fafafa;cursor:point
 // login screen and logged to the console, so a quick hard refresh + glance
 // tells him definitively whether Netlify is actually serving THIS file yet,
 // instead of guessing at whether a reported bug was ever really fixed.
-const BUILD_STAMP='2026-11-13-cdr-dials-clients2';
+const BUILD_STAMP='2026-11-14-leadlists-bulkdelete';
 console.log('[EdvantEdge CRM] build', BUILD_STAMP);
 const SB_URL='https://qyubbieikviesfcorusq.supabase.co';
 const SB_KEY=['eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF5','dWJiaWVpa3ZpZXNmY29ydXNxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU0OTkzNjEsImV4cCI6MjA5MTA3NTM2MX0.t_4mZWd_Qo1KHrGN9imMnnpn6UkLtLFrOeI2Q9lPD08'].join('');
@@ -904,6 +904,7 @@ let _clDatasetRefresh=null;
 function startClDatasetRefresh(){
   if(_clDatasetRefresh)clearInterval(_clDatasetRefresh);
   _clDatasetRefresh=setInterval(()=>{
+    if(document.hidden) return;
     if(S.user && S.cl && S.cl.country) clLoadFilterValues().catch(()=>{});
   },120000); // every 2 min
 }
@@ -920,6 +921,7 @@ let _bkRefresh=null;
 function startBkRefresh(){
   if(_bkRefresh)clearInterval(_bkRefresh);
   _bkRefresh=setInterval(()=>{
+    if(document.hidden) return;
     if(S.user && S.page==='bookings') bkLoad().catch(()=>{});
   },120000); // every 2 min
 }
@@ -1170,7 +1172,7 @@ let _secAlertTimer=null;
 function startSecurityAlertWatch(){
   if(_secAlertTimer) return;
   checkSecurityAlerts();
-  _secAlertTimer=setInterval(checkSecurityAlerts,20000);
+  _secAlertTimer=setInterval(()=>{ if(!document.hidden) checkSecurityAlerts(); },20000);
 }
 async function checkSecurityAlerts(){
   if(!S.user) return;
@@ -1861,6 +1863,7 @@ async function goPage(p){
   else if(p==='teamchat'){ chatInit(); }
   else if(p==='import')  { render(); } // Static page
   else if(p==='cdr')     { _cdr.batches=null; render(); }
+  else if(p==='leadlists'){ _ll.rows=null; render(); }
   else if(p==='export')  { render(); } // Static page
   else if(p==='bulkedit'){ if(!S.users?.length) loadUsers().then(()=>render()).catch(()=>{}); }
   else if(p==='datamanage'){ loadAsgnData().then(()=>render()).then(()=>dmInitFilterValues()).catch(()=>render()); }
@@ -2772,9 +2775,9 @@ function renderExport(){
 const DIAL_FILTER_MAX=10;
 function dialLabel(n){ n=Number(n)||0; return n===0?'Fresh Lead':'Dialled '+n+(n===1?' Time':' Times'); }
 function dialFilterOptionsHTML(){
-  let o='<option value="">All Dial Counts</option><option value="0">0 – Fresh Lead</option>';
-  for(let i=1;i<=DIAL_FILTER_MAX;i++) o+='<option value="'+i+'">'+i+' – Dialled '+i+(i===1?' Time':' Times')+'</option>';
-  return o+'<option value="'+(DIAL_FILTER_MAX+1)+'+">'+(DIAL_FILTER_MAX+1)+'+ Times</option>';
+  let o='<option value="">All Dials</option><option value="0">Dials 0 – Fresh Lead</option>';
+  for(let i=1;i<=DIAL_FILTER_MAX;i++) o+='<option value="'+i+'">Dials '+i+'</option>';
+  return o+'<option value="'+(DIAL_FILTER_MAX+1)+'+">Dials '+(DIAL_FILTER_MAX+1)+'+</option>';
 }
 let _bkMap=null,_bkMapAt=0;
 function bkPhoneKey(p){ let d=String(p==null?'':p).replace(/\D/g,''); if(d.startsWith('00')) d=d.slice(2); return d; }
@@ -2804,7 +2807,7 @@ function clBookCounts(phone){
 // ══════════════════════════════════════════════════════════════════
 // CDR CHECK — upload mobile-number lists (no duplicate check) → dial counts on matching leads
 // ══════════════════════════════════════════════════════════════════
-let _cdr={batches:null,busy:'',file:null,pasted:'',last:null};
+let _cdr={batches:null,busy:'',file:null,pasted:'',last:null,pending:null};
 async function cdrLoad(){
   try{
     const {data,error}=await sb.from('cdr_batches').select('*').order('id',{ascending:false}).limit(50);
@@ -2825,36 +2828,52 @@ function cdrNumbersFromRows(rows){
   });
   return out;
 }
+// Step 1: read the file/pasted text and show the record count (nothing is saved yet)
 async function cdrUpload(){
   if(_cdr.busy) return;
   const paste=(document.getElementById('cdr-paste')?.value||'').trim();
-  let nums=[], label='';
   try{
     _cdr.busy='Reading numbers…'; render();
+    let nums=[], label='';
     if(_cdr.file){ nums=nums.concat(cdrNumbersFromRows(await impReadRows(_cdr.file))); label=_cdr.file.name; }
     if(paste){ nums=nums.concat(cdrNumbersFromRows(paste.split(/\r?\n/))); label=label||('Pasted numbers '+new Date().toISOString().slice(0,16).replace('T',' ')); }
     if(!nums.length) throw new Error('No mobile numbers found. Choose a file or paste numbers.');
-    // A number repeated N times in the file = dialed N times. Nothing is rejected or de-duplicated away.
-    const counts={}; nums.forEach(n=>{ counts[n]=(counts[n]||0)+1; });
-    const keys=Object.keys(counts);
-    _cdr.busy='Saving '+nums.length.toLocaleString()+' dials…'; render();
-    const {data:b,error:be}=await sb.from('cdr_batches').insert({name:label.slice(0,190),total_numbers:keys.length,total_dials:nums.length,created_by:S.user?.id||null}).select().single();
-    if(be) throw be;
-    const rows=keys.map(n=>({batch_id:b.id,mobile_norm:n,cnt:counts[n]}));
-    for(let i=0;i<rows.length;i+=1000){
-      const {error}=await sb.from('cdr_rows').insert(rows.slice(i,i+1000));
-      if(error){ await sb.from('cdr_batches').delete().eq('id',b.id); throw error; }
-      _cdr.busy='Saving… '+Math.min(i+1000,rows.length).toLocaleString()+' / '+rows.length.toLocaleString(); const el=document.getElementById('cdr-busy'); if(el) el.textContent=_cdr.busy;
-    }
-    _cdr.busy='Updating dial counts on leads…'; render();
-    const {data:matched,error:ae}=await sb.rpc('cdr_apply_batch',{bid:b.id,sign:1});
-    if(ae) throw ae;
-    _cdr.last={name:label,numbers:keys.length,dials:nums.length,matched:matched||0};
-    _cdr.file=null; _cdr.busy='';
-    if(S.cl){S.cl.counts=null;}
-    showToast('✅ CDR list saved — '+nums.length.toLocaleString()+' dials added');
-    await cdrLoad();
+    const uniq=new Set(nums).size;
+    _cdr.pending={name:label,nums,uniq}; _cdr.busy=''; render();
   }catch(e){ _cdr.busy=''; render(); showToast('⚠️ '+(e.message||e),'error'); }
+}
+function cdrCancel(){ _cdr.pending=null; render(); }
+// Step 2: save one row per record (duplicates are NOT skipped), then check the saved count equals the file count
+async function cdrConfirm(){
+  const P=_cdr.pending; if(!P||_cdr.busy) return;
+  const total=P.nums.length; let bid=null;
+  try{
+    _cdr.busy='Saving 0 / '+total.toLocaleString()+' records…'; render();
+    const {data:b,error:be}=await sb.from('cdr_batches').insert({name:P.name.slice(0,190),total_numbers:P.uniq,total_dials:total,created_by:S.user?.id||null}).select().single();
+    if(be) throw be; bid=b.id;
+    const CH=5000, jobs=[]; for(let i=0;i<total;i+=CH) jobs.push(i);
+    let done=0;
+    const worker=async()=>{ while(jobs.length){ const i=jobs.shift(); const rows=P.nums.slice(i,i+CH).map(n=>({batch_id:bid,mobile_norm:n,cnt:1}));
+      const {error}=await sb.from('cdr_rows').insert(rows); if(error) throw error;
+      done+=rows.length; _cdr.busy='Saving '+done.toLocaleString()+' / '+total.toLocaleString()+' records…'; const el=document.getElementById('cdr-busy'); if(el) el.textContent=_cdr.busy; } };
+    await Promise.all([worker(),worker(),worker()]);
+    // validate: what is stored must equal what was in the file
+    _cdr.busy='Checking the upload…'; render();
+    const {count,error:ce}=await sb.from('cdr_rows').select('id',{count:'exact',head:true}).eq('batch_id',bid);
+    if(ce) throw ce;
+    if(count!==total){ await sb.from('cdr_batches').delete().eq('id',bid); throw new Error('Check failed: file has '+total.toLocaleString()+' records but '+(count||0).toLocaleString()+' were saved. The upload was cancelled, nothing was kept — please try again.'); }
+    _cdr.busy='Updating dial counts on leads…'; render();
+    const {data:matched,error:ae}=await sb.rpc('cdr_apply_batch',{bid:bid,sign:1});
+    if(ae) throw ae;
+    _cdr.last={name:P.name,records:total,numbers:P.uniq,stored:count,matched:matched||0};
+    _cdr.file=null; _cdr.pending=null; _cdr.busy='';
+    if(S.cl){S.cl.counts=null;}
+    showToast('✅ '+total.toLocaleString()+' records saved and verified');
+    await cdrLoad();
+  }catch(e){
+    if(bid){ try{ await sb.from('cdr_batches').delete().eq('id',bid); }catch(_){} }
+    _cdr.busy=''; render(); showToast('⚠️ '+(e.message||e),'error');
+  }
 }
 async function cdrRemove(id){
   const b=(_cdr.batches||[]).find(x=>x.id===id); if(!b) return;
@@ -2874,11 +2893,15 @@ function renderCdr(){
   const L=_cdr.last;
   const rows=(_cdr.batches||[]).map(b=>'<tr><td>'+h(b.name)+'</td><td style="text-align:right">'+Number(b.total_numbers||0).toLocaleString()+'</td><td style="text-align:right">'+Number(b.total_dials||0).toLocaleString()+'</td><td>'+h(String(b.created_at||'').slice(0,16).replace('T',' '))+'</td><td><button class="btn btn-outline btn-sm" style="color:#c0392b" onclick="cdrRemove('+b.id+')">🗑 Remove</button></td></tr>').join('');
   return title+`
-  ${L?`<div class="card" style="background:#ecfdf5;border:1px solid #a7f3d0;margin-bottom:14px"><b>✅ Saved: ${h(L.name)}</b><div style="font-size:13px;margin-top:4px">${L.numbers.toLocaleString()} numbers · ${L.dials.toLocaleString()} dials · ${L.matched.toLocaleString()} matching leads updated</div></div>`:''}
+  ${L?`<div class="card" style="background:#ecfdf5;border:1px solid #a7f3d0;margin-bottom:14px"><b>✅ Saved &amp; verified: ${h(L.name)}</b><div style="font-size:13px;margin-top:4px">File had <b>${L.records.toLocaleString()}</b> records → <b>${L.stored.toLocaleString()}</b> saved (no duplicates skipped) · ${L.numbers.toLocaleString()} different numbers · ${L.matched.toLocaleString()} matching leads updated</div></div>`:''}
+  ${_cdr.pending?`<div class="card" style="background:#eff6ff;border:1px solid #bfdbfe;margin-bottom:14px"><b>📋 File checked: ${h(_cdr.pending.name)}</b>
+    <div style="font-size:14px;margin:6px 0">Total records: <b style="font-size:20px">${_cdr.pending.nums.length.toLocaleString()}</b> &nbsp;·&nbsp; different numbers: <b>${_cdr.pending.uniq.toLocaleString()}</b> &nbsp;·&nbsp; repeated: <b>${(_cdr.pending.nums.length-_cdr.pending.uniq).toLocaleString()}</b></div>
+    <div style="font-size:12px;color:var(--text2)">Every record will be saved — repeated numbers are counted as extra dials, none are skipped.</div>
+    <div style="display:flex;gap:8px;margin-top:10px"><button class="btn" onclick="cdrConfirm()">✔ Save all ${_cdr.pending.nums.length.toLocaleString()} records</button><button class="btn btn-outline" onclick="cdrCancel()">Cancel</button></div></div>`:''}
   <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:16px;align-items:start">
     <div class="card">
       <h3 style="margin:0 0 6px">Upload dialed numbers</h3>
-      <p style="margin:0 0 12px;color:var(--text2);font-size:13px">One mobile number per row (a single column). A number repeated 3 times in your file = dialed 3 times. <b>No duplicate check</b> – every number is added.</p>
+      <p style="margin:0 0 12px;color:var(--text2);font-size:13px">One mobile number per row (a single column). A number repeated 3 times in your file = dialed 3 times. <b>No duplicate check</b> – every record is saved and the total is shown before you confirm.</p>
       <div style="border:2px dashed #ccc;border-radius:var(--lg);padding:1.6rem;text-align:center;cursor:pointer" onclick="document.getElementById('cdr-file').click()" ondragover="event.preventDefault();this.style.borderColor='var(--red)'" ondragleave="this.style.borderColor='#ccc'" ondrop="cdrDrop(event)">
         <div style="font-size:30px">📂</div><div style="font-weight:700">Click or drag &amp; drop</div>
         <div style="font-size:12px;color:var(--text2)">TXT, CSV, XLS or XLSX with mobile numbers</div>
@@ -2886,7 +2909,7 @@ function renderCdr(){
       <input type="file" id="cdr-file" accept=".txt,.csv,.xls,.xlsx" style="display:none" onchange="cdrPick(this)"/>
       <label style="display:block;margin-top:14px;font-size:12px;font-weight:700;color:var(--text2)">…or paste numbers (one per line)</label>
       <textarea id="cdr-paste" placeholder="61412345678&#10;14155550123&#10;447700900123" style="width:100%;min-height:90px;margin-top:4px;padding:8px;border:1.5px solid var(--border);border-radius:var(--r);font-size:12px;font-family:monospace"></textarea>
-      <div style="display:flex;justify-content:flex-end;margin-top:12px"><button class="btn" onclick="cdrUpload()">📞 Upload &amp; update dial counts</button></div>
+      <div style="display:flex;justify-content:flex-end;margin-top:12px"><button class="btn" onclick="cdrUpload()">📞 Check file</button></div>
     </div>
     <div class="card">
       <h3 style="margin:0 0 8px">Recent CDR uploads</h3>
@@ -2897,12 +2920,116 @@ function renderCdr(){
 }
 
 // ══════════════════════════════════════════════════════════════════
+// LEAD LISTS — one row per lead set (dataset): name, description, total, AUS / UK / USA / CA
+// ══════════════════════════════════════════════════════════════════
+let _ll={rows:null,busy:false};
+async function llLoad(){
+  _ll.busy=true;
+  try{
+    const {data,error}=await sb.rpc('lead_lists');
+    if(error) throw error;
+    _ll.rows=data||[];
+  }catch(e){ _ll.rows=[]; showToast('Could not load lead lists: '+(e.message||e),'error'); }
+  _ll.busy=false; if(S.page==='leadlists') render();
+}
+async function llEditDesc(i){
+  const r=(_ll.rows||[])[i]; if(!r||r.name==='(No lead set)') return;
+  const v=prompt('Description for "'+r.name+'":',r.description||''); if(v===null) return;
+  try{
+    await sb.from('crm_datasets').upsert({name:r.name,active:true},{onConflict:'name',ignoreDuplicates:true});
+    const {error}=await sb.from('crm_datasets').update({description:v.trim().slice(0,500)}).eq('name',r.name);
+    if(error) throw error; r.description=v.trim(); showToast('Description saved'); render();
+  }catch(e){ showToast('Could not save: '+(e.message||e),'error'); }
+}
+// open All Leads filtered to this lead set
+function llOpen(i){
+  const r=(_ll.rows||[])[i]; if(!r||r.name==='(No lead set)') return;
+  S.clToday=false; S.cl=null; S.viewMode='list';
+  S.cl={country:'Australia',page:0,total:0,mode:'latest',filters:{ds:r.name,disp:'all'},datasets:[],leads:[]};
+  S.page='leads'; render(); clInit(true).catch(e=>console.error(e));
+}
+async function llDelete(i){
+  const r=(_ll.rows||[])[i]; if(!r||r.name==='(No lead set)') return;
+  const t=prompt('This permanently deletes ALL '+Number(r.total).toLocaleString()+' leads in "'+r.name+'" and their activity history.\nBookings are NOT touched.\n\nType DELETE to confirm:');
+  if(t!=='DELETE'){ if(t!==null) showToast('Cancelled – you did not type DELETE','error'); return; }
+  try{
+    showToast('Deleting…'); const ids=[];
+    for(let from=0;;from+=1000){ const {data,error}=await sb.from('crm_leads').select('id').eq('data_set',r.name).order('id').range(from,from+999); if(error) throw error; (data||[]).forEach(x=>ids.push(x.id)); if(!data||data.length<1000) break; }
+    const n=await blkDeleteIds(ids);
+    showToast('🗑 '+n.toLocaleString()+' leads deleted'); _ll.rows=null; llLoad();
+  }catch(e){ showToast('Delete error: '+(e.message||e),'error'); }
+}
+function renderLeadLists(){
+  const title='<div class="pg-title" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">Lead Lists <span style="font-size:12px;font-weight:400;color:var(--text2)">Every lead set with its description, total and country split.</span><button class="btn btn-sm btn-outline" onclick="_ll.rows=null;render()">↻ Refresh</button></div>';
+  if(_ll.rows===null){ if(!_ll.busy) setTimeout(llLoad,0); return title+'<div class="card" style="text-align:center;padding:30px;color:var(--text2)">⏳ Loading…</div>'; }
+  const rows=_ll.rows, tot=rows.reduce((a,r)=>a+Number(r.total),0), n=v=>Number(v||0).toLocaleString();
+  const body=rows.map((r,i)=>`<tr>
+    <td style="font-weight:700">${h(r.name)}</td>
+    <td style="color:var(--text2);max-width:280px">${h(r.description)||'<span style="color:#ccc">—</span>'}${r.name!=='(No lead set)'?` <a href="javascript:void(0)" onclick="llEditDesc(${i})" title="Edit description" style="text-decoration:none">✏️</a>`:''}</td>
+    <td style="text-align:right;font-weight:800">${n(r.total)}</td>
+    <td style="text-align:right">${n(r.aus)}</td><td style="text-align:right">${n(r.uk)}</td><td style="text-align:right">${n(r.usa)}</td><td style="text-align:right">${n(r.ca)}</td>
+    <td style="text-align:right;color:var(--text2)">${n(r.other)}</td>
+    <td style="white-space:nowrap">${r.name!=='(No lead set)'?`<button class="btn btn-outline btn-sm" onclick="llOpen(${i})">Open</button> <button class="btn btn-outline btn-sm" style="color:#c0392b" onclick="llDelete(${i})">🗑</button>`:''}</td></tr>`).join('');
+  return title+`<div class="card"><div style="font-size:13px;color:var(--text2);margin-bottom:10px"><b>${rows.length.toLocaleString()}</b> lead sets · <b>${n(tot)}</b> leads</div>
+    <div class="tbl-wrap"><table><thead class="dark-thead"><tr><th>Lead Set Name</th><th>Description</th><th style="text-align:right">Total Leads</th><th style="text-align:right">AUS</th><th style="text-align:right">UK</th><th style="text-align:right">USA</th><th style="text-align:right">CA</th><th style="text-align:right">Other</th><th></th></tr></thead>
+    <tbody>${body||'<tr><td colspan="9" style="text-align:center;padding:24px;color:var(--text2)">No leads yet.</td></tr>'}</tbody></table></div>
+    <p style="font-size:11px;color:var(--text2);margin:8px 0 0">USA includes leads tagged "USA/Canada". "Other" = leads whose country is none of AUS, UK, USA, CA.</p></div>`;
+}
+
+// ══════════════════════════════════════════════════════════════════
+// BULK SELECT + DELETE (All Leads, admin) — removes the leads and their activity history in one database call.
+// Bookings (billing records) are never touched.
+// ══════════════════════════════════════════════════════════════════
+function blkSel(){ return S.clSel instanceof Set?S.clSel:(S.clSel=new Set()); }
+async function blkDeleteIds(ids){
+  let n=0;
+  for(let i=0;i<ids.length;i+=500){
+    const {data,error}=await sb.rpc('delete_leads',{ids:ids.slice(i,i+500)});
+    if(error) throw error; n+=Number(data)||0;
+  }
+  try{ await rebuildFilterCache(); }catch(e){ console.error('post-delete filter cache:',e); }
+  blkSel().clear(); if(S.cl){S.cl.counts=null;S.cl.datasets=[];}
+  _ll.rows=null;
+  return n;
+}
+function blkToggle(id,cb){ if(cb.checked) blkSel().add(id); else blkSel().delete(id); blkBar(); const all=document.getElementById('blk-all'); if(all){ const ids=(S.cl?.leads||[]).map(l=>l.id); all.checked=ids.length>0&&ids.every(x=>blkSel().has(x)); } }
+function blkTogglePage(cb){ (S.cl?.leads||[]).forEach(l=>{ if(cb.checked) blkSel().add(l.id); else blkSel().delete(l.id); }); document.querySelectorAll('.blk-cb').forEach(x=>{ x.checked=cb.checked; }); blkBar(); }
+function blkBar(){
+  const el=document.getElementById('blk-bar'); if(!el) return;
+  const n=blkSel().size, tot=(S.cl?.total)||0;
+  el.style.display=n?'flex':'none';
+  el.innerHTML=n?`<b>${n.toLocaleString()} selected</b>
+    ${n<tot?`<a href="javascript:void(0)" onclick="blkSelectAllFiltered()" style="font-size:12px">Select all ${tot.toLocaleString()} matching the filters</a>`:''}
+    <a href="javascript:void(0)" onclick="blkClear()" style="font-size:12px">Clear</a>
+    <button class="btn btn-sm" style="background:#c0392b;color:#fff" onclick="blkDelete()">🗑 Delete selected</button>`:'';
+}
+function blkClear(){ blkSel().clear(); document.querySelectorAll('.blk-cb,#blk-all').forEach(x=>{x.checked=false;}); blkBar(); }
+async function blkSelectAllFiltered(){
+  try{
+    showToast('Selecting…');
+    for(let from=0;;from+=1000){ const {data,error}=await clBuildQ('id',true).order('id').range(from,from+999); if(error) throw error; (data||[]).forEach(r=>blkSel().add(r.id)); if(!data||data.length<1000) break; }
+    document.querySelectorAll('.blk-cb').forEach(x=>{ x.checked=true; }); const a=document.getElementById('blk-all'); if(a) a.checked=true; blkBar();
+  }catch(e){ showToast('Select error: '+(e.message||e),'error'); }
+}
+async function blkDelete(){
+  const ids=[...blkSel()]; if(!ids.length) return;
+  const t=prompt('This permanently deletes '+ids.length.toLocaleString()+' lead'+(ids.length===1?'':'s')+' from the CRM and removes their activity history.\nBookings are NOT touched. This cannot be undone.\n\nType DELETE to confirm:');
+  if(t!=='DELETE'){ if(t!==null) showToast('Cancelled – you did not type DELETE','error'); return; }
+  try{
+    showToast('Deleting '+ids.length.toLocaleString()+' leads…');
+    const n=await blkDeleteIds(ids);
+    showToast('🗑 '+n.toLocaleString()+' leads deleted');
+    if(S.cl?.mode==='roundrobin') clRoundRobin(0,true); else clLoadPage(0,true);
+  }catch(e){ showToast('Delete error: '+(e.message||e),'error'); }
+}
+
+// ══════════════════════════════════════════════════════════════════
 // IMPORT DATA — two stages (modelled on the reference import.php)
 //   Stage 1: add a file → every row is checked (Unique / Duplicate / Wrong number / Indian number)
 //   Stage 2: review the checked rows → upload (duplicates are never imported)
 // ══════════════════════════════════════════════════════════════════
 let _imp={stage:1,busy:'',file:'',rows:[],cnt:{unique:0,duplicate:0,wrong:0,indian:0},filter:'',incBad:true,
-          bookMap:{},dialMap:{},batchId:'',progress:null,done:null,agentMap:{}};
+          bookMap:{},dialMap:{},batchId:'',progress:null,done:null,agentMap:{},dsName:'',dsDesc:''};
 
 // Column names we understand (first matching header wins). Order = fixed order when a file has no header row.
 const IMP_FIELDS=['country','parent_name','child_name','grade','mobile','email','city','timezone','ethnicity','disposition'];
@@ -2988,7 +3115,7 @@ async function impReadRows(file){
   return parseCSVText(text);
 }
 
-function impReset(){ _imp={stage:1,busy:'',file:'',rows:[],cnt:{unique:0,duplicate:0,wrong:0,indian:0},filter:'',incBad:true,bookMap:{},dialMap:{},batchId:'',progress:null,done:null,agentMap:{}}; render(); }
+function impReset(){ _imp={stage:1,busy:'',file:'',rows:[],cnt:{unique:0,duplicate:0,wrong:0,indian:0},filter:'',incBad:true,bookMap:{},dialMap:{},batchId:'',progress:null,done:null,agentMap:{},dsName:'',dsDesc:''}; render(); }
 function impDrop(e){ e.preventDefault(); e.currentTarget.style.borderColor='#ccc'; const f=e.dataTransfer?.files?.[0]; if(f) impSetFile(f); }
 function impPickFile(inp){ const f=inp?.files?.[0]; if(f) impSetFile(f); }
 function impSetFile(f){
@@ -3002,6 +3129,8 @@ function impSetFile(f){
 async function impRunCheck(){
   const file=window._impPending;
   if(!file){ showToast('Please choose a file to upload','error'); return; }
+  _imp.dsName=(document.getElementById('imp-dsname')?.value||'').trim().slice(0,120);
+  _imp.dsDesc=(document.getElementById('imp-dsdesc')?.value||'').trim().slice(0,500);
   _imp.busy='Reading file…'; _imp.file=file.name; render();
   try{
     const raw=await impReadRows(file);
@@ -3018,6 +3147,7 @@ async function impRunCheck(){
       // separate short country-code column + local number (e.g. 44 + 7796064407)
       if(code&&code.length<=4&&norm&&!norm.startsWith(code)&&norm.length<=11) norm=code+norm;
       impClean(f);
+      if(!f.data_set&&_imp.dsName) f.data_set=_imp.dsName;   // keep the file's own dataset name; use the typed name only when the file has none
       rows.push({row_no:++rowNo,country:f.country,parent_name:f.parent_name,child_name:f.child_name,grade:f.grade,mobile:mob,norm,
         email:f.email,city:f.city,timezone:f.timezone,ethnicity:f.ethnicity,disposition:f.disposition,data_set:f.data_set,alt_phone:f.alt_phone,agent:f.agent,status:''});
     }
@@ -3075,15 +3205,16 @@ async function impLoadBookings(){
   const map={}; impViewRows().slice(0,1000).forEach(r=>{ if(r.norm&&!map[r.norm]) map[r.norm]=(_bkMap||{})[bkPhoneKey(r.norm)]||{}; });
   _imp.bookMap=map;
 }
+function impDatasetNames(){ const m={}; _imp.rows.forEach(r=>{ if(r.data_set) m[r.data_set]=1; }); const k=Object.keys(m); return k.length>4?k.slice(0,4).join(', ')+' +'+(k.length-4)+' more':k.join(', '); }
 function impViewRows(){ return _imp.filter?_imp.rows.filter(r=>r.status===_imp.filter):_imp.rows; }
 async function impSetFilter(f){ _imp.filter=f; _imp.busy='Loading…'; render(); await impLoadBookings(); _imp.busy=''; render(); }
 function impToggleBad(cb){ _imp.incBad=!!cb.checked; }
 function impDiscard(){ if(!confirm('Discard this checked file?\nNothing has been imported yet.')) return; impReset(); }
 function impDownloadChecked(){
-  const head=['Row','Country','Parent Name','Child Name','Grade','Mobile','Email','City','Time Zone','Ethnicity','Dispositions','Status'];
+  const head=['Row','Country','Parent Name','Child Name','Grade','Mobile','Email','City','Time Zone','Ethnicity','Dispositions','Dataset','Status'];
   const lbl={unique:'Unique',duplicate:'Duplicate',wrong:'Wrong number',indian:'Indian number'};
   const q=v=>'"'+String(v==null?'':v).replace(/"/g,'""')+'"';
-  const csv=[head.map(q).join(',')].concat(_imp.rows.map(r=>[r.row_no,r.country,r.parent_name,r.child_name,r.grade,r.mobile,r.email,r.city,r.timezone,r.ethnicity,r.disposition,lbl[r.status]].map(q).join(','))).join('\n');
+  const csv=[head.map(q).join(',')].concat(_imp.rows.map(r=>[r.row_no,r.country,r.parent_name,r.child_name,r.grade,r.mobile,r.email,r.city,r.timezone,r.ethnicity,r.disposition,r.data_set,lbl[r.status]].map(q).join(','))).join('\n');
   const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
   a.download='checked_'+(_imp.file||'import').replace(/\.[^.]+$/,'')+'.csv'; a.click();
 }
@@ -3135,6 +3266,8 @@ async function impStartUpload(){
     try{
       const newSets=[...new Set(leads.map(l=>l.data_set).filter(Boolean))];
       if(newSets.length) await sb.from('crm_datasets').upsert(newSets.map(name=>({name,active:true})),{onConflict:'name',ignoreDuplicates:true});
+      // description is for admin reference: stored on the dataset typed in, or on every dataset in the file when the file named them
+      if(_imp.dsDesc&&newSets.length) await sb.from('crm_datasets').update({description:_imp.dsDesc}).in('name',newSets);
     }catch(e){ console.error('post-import crm_datasets sync failed:',e); }
   }
   _imp.done={inserted,errors:_imp.progress.errors,msgs:[...new Set(_imp.progress.msgs)],skipped:_imp.cnt.duplicate};
@@ -3172,6 +3305,12 @@ function renderImport(){
           <div id="imp-fname" style="margin-top:10px;font-size:13px;font-weight:700;color:#065f46"></div>
         </div>
         <input type="file" id="imp-file" accept=".csv,.txt,.xlsx,.xls" style="display:none" onchange="impPickFile(this)"/>
+        <div style="margin-top:14px;padding-top:12px;border-top:1px dashed var(--border)">
+          <div style="font-size:12px;font-weight:700;color:var(--text2);margin-bottom:6px">Optional – for admin reference</div>
+          <input id="imp-dsname" value="${h(_imp.dsName)}" placeholder="Dataset name (used only for rows that have no Data Set in the file)" style="width:100%;padding:8px;border:1.5px solid var(--border);border-radius:var(--r);font-size:12px;margin-bottom:8px">
+          <input id="imp-dsdesc" value="${h(_imp.dsDesc)}" placeholder="Description (e.g. source file, campaign or data packet)" style="width:100%;padding:8px;border:1.5px solid var(--border);border-radius:var(--r);font-size:12px">
+          <div style="font-size:11px;color:var(--text2);margin-top:5px">If your file already has a <b>Data Set</b> column, those names are kept as they are.</div>
+        </div>
         <div style="display:flex;justify-content:flex-end;margin-top:16px"><button class="btn" id="imp-check-btn" onclick="impRunCheck()" disabled>✔ Add file &amp; check</button></div>
       </div>
       <div class="card">
@@ -3208,9 +3347,9 @@ function renderImport(){
     const bm=_imp.bookMap[r.norm]||{}; let tc=0;
     tc=Object.keys(bm).reduce((a,k)=>a+bm[k],0);
     const cells=BK_CLIENTS.map(cl=>{ const v=bm[cl]||0; return `<td style="text-align:center">${v?`<span style="background:#e0e7ff;color:#3730a3;font-weight:700;border-radius:8px;padding:1px 8px">${v}</span>`:'<span style="color:#ccc">0</span>'}</td>`; }).join('');
-    return `<tr><td style="color:var(--text2)">${r.row_no}</td><td>${h(r.country)}</td><td>${h(r.parent_name)}</td><td>${h(r.child_name)}</td><td>${h(r.grade)}</td><td><b>${h(r.mobile)}</b></td><td>${h(r.email)}</td><td>${h(r.city)}</td><td>${h(r.timezone)}</td><td>${h(r.ethnicity)}</td><td>${h(r.disposition)}</td>${cells}<td style="text-align:center"><b>${tc}</b></td><td style="text-align:center"><b>${_imp.dialMap[r.norm]||0}</b></td><td>${impStatusPill(r.status)}</td></tr>`;
+    return `<tr><td style="color:var(--text2)">${r.row_no}</td><td>${h(r.country)}</td><td>${h(r.parent_name)}</td><td>${h(r.child_name)}</td><td>${h(r.grade)}</td><td><b>${h(r.mobile)}</b></td><td>${h(r.email)}</td><td>${h(r.city)}</td><td>${h(r.timezone)}</td><td>${h(r.ethnicity)}</td><td>${h(r.disposition)}</td><td><b>${h(r.data_set)||'—'}</b></td>${cells}<td style="text-align:center"><b>${tc}</b></td><td style="text-align:center"><b>${_imp.dialMap[r.norm]||0}</b></td><td>${impStatusPill(r.status)}</td></tr>`;
   }).join('');
-  const th=['#','Country','Parent Name','Child Name','Grade','Mobile','Email','City','Time Zone','Ethnicity','Dispositions'].concat(BK_CLIENTS,['Total Clients','Total Dials','Status']).map(x=>`<th style="padding:8px 10px;text-align:left;font-size:11px;white-space:nowrap;background:#f4f6fa">${x}</th>`).join('');
+  const th=['#','Country','Parent Name','Child Name','Grade','Mobile','Email','City','Time Zone','Ethnicity','Dispositions','Dataset'].concat(BK_CLIENTS,['Total Clients','Total Dials','Status']).map(x=>`<th style="padding:8px 10px;text-align:left;font-size:11px;white-space:nowrap;background:#f4f6fa">${x}</th>`).join('');
   const prog=_imp.progress;
   return title+impStepper(2)+`
   <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:14px">
@@ -3219,13 +3358,13 @@ function renderImport(){
   <div class="card">
     <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:10px">
       <div><h3 style="margin:0 0 2px">Stage 2 – Check &amp; upload</h3>
-        <div style="font-size:12px;color:var(--text2)">${h(_imp.file)} · ${_imp.rows.length.toLocaleString()} rows · demo bookings and dials shown are what is already in the database.</div></div>
+        <div style="font-size:12px;color:var(--text2)">${h(_imp.file)} · ${_imp.rows.length.toLocaleString()} rows · Dataset: <b>${h(impDatasetNames()||'— none —')}</b>${_imp.dsDesc?' · '+h(_imp.dsDesc):''} · demo bookings and dials shown are what is already in the database.</div></div>
       <button class="btn btn-outline btn-sm" onclick="impDownloadChecked()">⬇ Download checked file</button>
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">${pill('','All',_imp.rows.length)}${pill('unique','Unique',c.unique)}${pill('duplicate','Duplicate',c.duplicate)}${pill('wrong','Wrong Number',c.wrong)}${pill('indian','Indian Number',c.indian)}</div>
     <div style="overflow:auto;max-height:420px;border:1px solid var(--border,#e2e6ed);border-radius:8px${_imp.busy?';opacity:.5':''}">
       <table style="width:100%;border-collapse:collapse;font-size:12px"><thead style="position:sticky;top:0"><tr>${th}</tr></thead>
-      <tbody>${tr||`<tr><td colspan="${14+BK_CLIENTS.length}" style="text-align:center;padding:24px;color:var(--text2)">No rows in this view.</td></tr>`}</tbody></table>
+      <tbody>${tr||`<tr><td colspan="${15+BK_CLIENTS.length}" style="text-align:center;padding:24px;color:var(--text2)">No rows in this view.</td></tr>`}</tbody></table>
     </div>
     ${(impViewRows().length>1000)?`<p style="font-size:12px;color:var(--text2);margin:8px 0 0">Showing the first 1,000 rows of this view. Every row is still checked and imported – use "Download checked file" to see all of them.</p>`:''}
     <div style="display:flex;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-top:16px;align-items:center">
@@ -4756,7 +4895,7 @@ function stopDpLivePoll(){
 function startDpLivePoll(){
   stopDpLivePoll();
   loadDialpadLiveStatus(); // immediate first load
-  _dpLivePollTimer=setInterval(()=>{ loadDialpadLiveStatus(); }, 10000);
+  _dpLivePollTimer=setInterval(()=>{ if(!document.hidden) loadDialpadLiveStatus(); }, 10000);
 }
 
 async function loadDialpadLiveStatus(){
@@ -9758,6 +9897,7 @@ function renderApp(){
     {id:'dispanalysis',icon:'📊',label:'Disposition Analysis'},
     {id:'export',icon:'⬇',label:'Export Data'},
     {id:'import',icon:'⬆',label:'Import Data'},
+    {id:'leadlists',icon:'🗂',label:'Lead Lists'},
     {id:'freshleads',icon:'🌱',label:'Fresh Leads'},
   ];
   const saHRMS=[
@@ -9842,9 +9982,9 @@ function renderApp(){
         <div style="margin:2px 0">
           <div onclick="S.reportsOpen=!S.reportsOpen;render()" style="cursor:pointer;display:flex;align-items:center;justify-content:space-between;padding:9px 14px;font-size:12px;font-weight:700;color:rgba(255,255,255,.8);transition:.15s;border-left:3px solid transparent" onmouseover="this.style.background='rgba(255,255,255,.05)'" onmouseout="this.style.background='transparent'">
             <span style="display:flex;align-items:center;gap:8px"><span style="font-size:14px">📁</span>Reports & Data</span>
-            <span style="font-size:10px;color:rgba(255,255,255,.5);transition:.2s;display:inline-block;transform:rotate(${S.reportsOpen||['reports','dispanalysis','export','import','freshleads'].includes(S.page)?'90':'0'}deg)">▶</span>
+            <span style="font-size:10px;color:rgba(255,255,255,.5);transition:.2s;display:inline-block;transform:rotate(${S.reportsOpen||['reports','dispanalysis','export','import','leadlists','freshleads'].includes(S.page)?'90':'0'}deg)">▶</span>
           </div>
-          ${(S.reportsOpen||['reports','dispanalysis','export','import','freshleads'].includes(S.page))?`<div style="margin-left:14px;border-left:2px solid rgba(192,32,42,.35);padding-left:4px;margin-bottom:4px">
+          ${(S.reportsOpen||['reports','dispanalysis','export','import','leadlists','freshleads'].includes(S.page))?`<div style="margin-left:14px;border-left:2px solid rgba(192,32,42,.35);padding-left:4px;margin-bottom:4px">
             ${saReports.map(n=>`<div class="nav-item ${S.page===n.id?'active':''}" onclick="goPage('${n.id}')" style="padding:7px 12px;font-size:11px">
               <span style="font-size:13px;width:18px;text-align:center;display:inline-block">${n.icon}</span>${n.label}
             </div>`).join('')}
@@ -9886,7 +10026,7 @@ function renderApp(){
   </div>`;
 }
 function renderSAPages(){
-  const pages={dashboard:renderSADash,leads:renderSALeads,assign:renderAssign,agents:renderAgents,bulkedit:()=>{ goPage('datamanage'); return ''; },datamanage:renderDataManage,attendance:renderAttendance,performance:renderPerformance,bookings:renderBookings,agentkitty:renderAdminAgentKitty,agentinventory:renderAgentInventory,freshleads:renderFreshLeads,todayleads:renderAdminTodayLeads,reports:renderReports,workedleads:renderWorkedLeads,dispanalysis:renderDispAnalysis,export:renderExport,import:renderImport,cdr:renderCdr,settings:renderSettings,addlead:renderAddLeadPage,editlead:renderEditLeadPage,
+  const pages={dashboard:renderSADash,leads:renderSALeads,assign:renderAssign,agents:renderAgents,bulkedit:()=>{ goPage('datamanage'); return ''; },datamanage:renderDataManage,attendance:renderAttendance,performance:renderPerformance,bookings:renderBookings,agentkitty:renderAdminAgentKitty,agentinventory:renderAgentInventory,freshleads:renderFreshLeads,todayleads:renderAdminTodayLeads,reports:renderReports,workedleads:renderWorkedLeads,dispanalysis:renderDispAnalysis,export:renderExport,import:renderImport,cdr:renderCdr,leadlists:renderLeadLists,settings:renderSettings,addlead:renderAddLeadPage,editlead:renderEditLeadPage,
     hrms_overview:renderHRMSOverview,hrms_attendance:renderHRMSAttendance,hrms_leaves:renderHRMSLeaves,hrms_salary:renderHRMSSalary,hrms_increment:renderHRMSIncrement,
     quality:renderQualityPage,promptmanager:renderPromptManager,
     teamchat:renderTeamChat,
@@ -13802,7 +13942,7 @@ function mRenderAll(){
 }
 
 // Auto refresh every 2 min
-setInterval(loadMobilePerf,120000);
+setInterval(()=>{ if(!document.hidden) loadMobilePerf(); },120000);
 
 
 // ════════════════════════════════════════════════════════════════
@@ -15615,7 +15755,7 @@ function renderCountryLeads(isAdmin){
   if(!S.cl) S.cl={country:(isAdmin||S.clToday)?'Australia':null,page:0,total:0,mode:'latest',filters:{},datasets:[],leads:[]};
   const CL=S.cl;
   const CTRY=[{k:'Australia',f:'🇦🇺',ab:'AU'},{k:'United Kingdom',f:'🇬🇧',ab:'GB'},{k:'USA',f:'🇺🇸',ab:'US'},{k:'Canada',f:'🇨🇦',ab:'CA'},{k:'UAE',f:'🇦🇪',ab:'AE'}];
-  const cols=isAdmin?21:11;
+  const cols=isAdmin?22:11;
 
   const ctabs=CTRY.map(({k,f,ab})=>{
     const active=k===CL.country;
@@ -15658,9 +15798,10 @@ function renderCountryLeads(isAdmin){
         <div style="font-size:11px;color:var(--text3);margin-top:2px" id="cl-result-sub"></div>
       </div>
     </div>
+    ${isAdmin?'<div id="blk-bar" style="display:none;align-items:center;gap:12px;flex-wrap:wrap;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:8px 12px;margin-bottom:8px"></div>':''}
     <div class="tbl-wrap"><table>
       <thead class="dark-thead"><tr>
-        <th style="min-width:24px">#</th><th style="min-width:130px">Parent Name</th>
+        ${isAdmin?'<th style="width:26px"><input type="checkbox" id="blk-all" onchange="blkTogglePage(this)" title="Select all on this page"></th>':''}<th style="min-width:24px">#</th><th style="min-width:130px">Parent Name</th>
         <th>Child</th><th>Phone</th><th>Zone</th><th>Country</th>
         <th>Grade</th><th>Ethnicity</th><th>Dataset</th><th>Dials</th><th>Disposition</th>
         ${isAdmin?'<th style="color:#F5A623">Agent</th>'+clAdminExtraHeads():''}
@@ -15913,7 +16054,7 @@ async function clCountQ(isAdm){ const{count}=await clApplyFilters(sb.from('crm_l
 async function clLoadPage(page,isAdmin,opts){
   const silent = !!(opts&&opts.silent);
   const CL=S.cl||{}; CL.page=page;
-  const cols=isAdmin?21:11;
+  const cols=isAdmin?22:11;
   const SEL='id,parent_name,child_name,phone_code,Zone,Country,grade,ethnicity,data_set,dialpad_count,total_dials,disposition,agent_name';
   const asc=CL.mode==='oldest';
   const tbody=document.getElementById('cl-body');
@@ -15966,7 +16107,7 @@ async function clLoadPage(page,isAdmin,opts){
 async function clRoundRobin(page,isAdmin,opts){
   const silent = !!(opts&&opts.silent);
   const CL=S.cl||{}; CL.page=page;
-  const cols=isAdmin?21:11;
+  const cols=isAdmin?22:11;
   const SEL='id,parent_name,child_name,phone_code,Zone,Country,grade,ethnicity,data_set,dialpad_count,total_dials,disposition,agent_name';
   const tbody=document.getElementById('cl-body');
   if(!silent && tbody) tbody.innerHTML=`<tr><td colspan="${cols}" style="text-align:center;padding:2rem;color:var(--text3)">⏳ Round Robin...</td></tr>`;
@@ -16017,7 +16158,7 @@ async function clRoundRobin(page,isAdmin,opts){
 }
 
 function clRenderTable(rows,offset,isAdmin,elapsed){
-  const CL=S.cl||{}; const cols=isAdmin?21:11;
+  const CL=S.cl||{}; const cols=isAdmin?22:11;
   const tbody=document.getElementById('cl-body');
   if(!tbody)return;
   if(!rows.length){
@@ -16029,6 +16170,7 @@ function clRenderTable(rows,offset,isAdmin,elapsed){
     const dc=d==='Demo Scheduled'?'#00956E':d==='Hot'?'var(--red)':d?'var(--navy)':'#888';
     const db=d==='Demo Scheduled'?'#E3FAF5':d==='Hot'?'#FDEDEC':d?'#EBF5FB':'#F7F8FA';
     return`<tr style="cursor:pointer" onclick="clOpenLead(${i+offset})" title="Click to open lead">
+      ${isAdmin?`<td onclick="event.stopPropagation()" style="width:26px"><input type="checkbox" class="blk-cb" ${blkSel().has(l.id)?'checked':''} onchange="blkToggle('${h(l.id)}',this)"></td>`:''}
       <td style="color:#bbb;font-size:11px">${offset+i+1}</td>
       <td style="font-weight:700">${h(l.parent_name)||'—'}</td>
       <td>${h(l.child_name)||'—'}</td>
@@ -16042,6 +16184,7 @@ function clRenderTable(rows,offset,isAdmin,elapsed){
       ${isAdmin?`<td style="font-size:11px;color:var(--text2)">${h(l.agent_name||'Unassigned')}</td>`+clAdminExtraCells(l):''}
     </tr>`;
   }).join('');
+  if(isAdmin&&typeof blkBar==='function'){ blkBar(); const a=document.getElementById('blk-all'); if(a) a.checked=false; }
 }
 
 function clUpdatePag(page,rowsOnPage,isAdmin){
