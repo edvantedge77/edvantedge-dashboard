@@ -76,10 +76,11 @@ exports.handler = async (event, context) => {
 
     const ua = (h['user-agent'] || '').slice(0, 400);
     const p = parseUA(ua);
-    const row = { user_id: me.id, agent_name: me.name, username: me.username, role: me.role, ip, country: geo.country, region: geo.region, city: geo.city, device: p.device, browser: p.browser, os: p.os, user_agent: ua, geo_source: geo.source };
-    const ins = await fetch(SUPABASE_URL + '/rest/v1/crm_login_log', { method: 'POST', headers: { ...H, Prefer: 'return=minimal' }, body: JSON.stringify(row) });
+    const row = { user_id: me.id, agent_name: me.name, username: me.username, role: me.role, ip, country: geo.country, region: geo.region, city: geo.city, device: p.device, browser: p.browser, os: p.os, user_agent: ua, geo_source: geo.source, last_seen: new Date().toISOString() };
+    const ins = await fetch(SUPABASE_URL + '/rest/v1/crm_login_log?select=id', { method: 'POST', headers: { ...H, Prefer: 'return=representation' }, body: JSON.stringify(row) });
     if (!ins.ok) return reply(500, { error: 'Could not save', detail: (await ins.text()).slice(0, 200) });
-    return reply(200, { ok: true });
+    let id = null; try { const j = await ins.json(); id = j && j[0] && j[0].id; } catch (e) { /* id is optional */ }
+    return reply(200, { ok: true, id });
   } catch (e) {
     return reply(500, { error: String(e && e.message || e) });
   }

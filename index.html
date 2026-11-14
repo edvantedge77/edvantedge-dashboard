@@ -554,7 +554,7 @@ tr:last-child td{border-bottom:none;}tr:hover td{background:#fafafa;cursor:point
 // login screen and logged to the console, so a quick hard refresh + glance
 // tells him definitively whether Netlify is actually serving THIS file yet,
 // instead of guessing at whether a reported bug was ever really fixed.
-const BUILD_STAMP='2026-11-15-assign-inv-login';
+const BUILD_STAMP='2026-11-15-login-activity';
 console.log('[EdvantEdge CRM] build', BUILD_STAMP);
 const SB_URL='https://qyubbieikviesfcorusq.supabase.co';
 const SB_KEY=['eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF5','dWJiaWVpa3ZpZXNmY29ydXNxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU0OTkzNjEsImV4cCI6MjA5MTA3NTM2MX0.t_4mZWd_Qo1KHrGN9imMnnpn6UkLtLFrOeI2Q9lPD08'].join('');
@@ -1738,6 +1738,7 @@ async function doLogin(){
 // ── Critical navigation functions ────────────────────────────────────────────
 async function doLogout(){
   S._loggingOutCleanly=true;
+  try{ await loginPing(true); }catch(e){}
   stopDialerHeartbeat();
   stopClDatasetRefresh();
   stopBkRefresh();
@@ -3043,77 +3044,157 @@ async function blkDelete(){
 }
 
 // ══════════════════════════════════════════════════════════════════
-// LOGIN ACTIVITY — admin-only history of every sign-in (IP, approximate location, device)
-// The record is written by the server (login-track function) at sign-in; nothing is typed by the agent
-// and no password or token is stored.
+// LOGIN ACTIVITY — admin-only: who is online, every sign-in (IP, approx. location, device),
+// time online, login hours (day / week / month) and dialling time.
+// Sign-in is recorded by the server (login-track function); the browser then pings every minute
+// (last seen) and once on logout. No password or token is stored.
 // ══════════════════════════════════════════════════════════════════
 function trackLogin(token){
   if(!token) return;
   try{
-    fetch('/.netlify/functions/login-track',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},body:JSON.stringify({k:SB_KEY})}).catch(()=>{});
+    fetch('/.netlify/functions/login-track',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},body:JSON.stringify({k:SB_KEY})})
+      .then(r=>r.json()).then(j=>{ if(j&&j.id){ try{localStorage.setItem('ev_lid',String(j.id));}catch(e){} } }).catch(()=>{});
   }catch(e){}   // tracking must never get in the way of logging in
 }
-let _lg={rows:null,busy:false,f:{agent:'',from:'',to:'',q:'',flagged:false}};
-async function lgLoad(){
-  _lg.busy=true; const rows=[];
+async function loginPing(out){
   try{
-    const since=new Date(Date.now()-90*86400000).toISOString();
-    for(let from=0;from<10000;from+=1000){
+    const id=Number(localStorage.getItem('ev_lid')); if(!id||!S.user) return;
+    await Promise.race([sb.rpc('login_ping',{p_id:id,p_out:!!out}),new Promise(r=>setTimeout(r,1500))]);
+    if(out) localStorage.removeItem('ev_lid');
+  }catch(e){}
+}
+setInterval(()=>{ if(S.user) loginPing(false); },60000);
+let _lg={rows:null,busy:false,dial:{},day:'',user:'',sel:new Set(),f:{q:'',flagged:false}};
+const lgIst=(iso,o)=>new Date(iso).toLocaleString('en-GB',Object.assign({timeZone:'Asia/Kolkata'},o));
+const lgDay=iso=>new Date(iso).toLocaleDateString('en-CA',{timeZone:'Asia/Kolkata'});
+function lgDates(){
+  const day=_lg.day||lgDay(new Date().toISOString());
+  const d=new Date(day+'T00:00:00Z'); d.setUTCDate(d.getUTCDate()-((d.getUTCDay()+6)%7));
+  const wk=d.toISOString().slice(0,10); d.setUTCDate(d.getUTCDate()+6); const wkEnd=d.toISOString().slice(0,10);
+  const mo=day.slice(0,8)+'01'; const n=new Date(mo+'T00:00:00Z'); n.setUTCMonth(n.getUTCMonth()+1);
+  return {day,wk,wkEnd,mo,moNext:n.toISOString().slice(0,10)};
+}
+async function lgLoad(quiet){
+  if(_lg.busy) return; _lg.busy=true; const rows=[];
+  try{
+    const since=new Date(Date.now()-95*86400000).toISOString();
+    for(let from=0;from<20000;from+=1000){
       const {data,error}=await sb.from('crm_login_log').select('*').gte('login_at',since).order('login_at',{ascending:false}).range(from,from+999);
       if(error) throw error; (data||[]).forEach(r=>rows.push(r)); if(!data||data.length<1000) break;
     }
-    // flag changes: first time this agent is seen on an IP / in a country compared with their earlier logins
-    const seenIp={}, lastCountry={};
+    // flags: first time this agent is seen on an IP / device / in a country compared with their earlier logins
+    const seen={}, lastCountry={};
     rows.slice().reverse().forEach(r=>{
-      const k=r.user_id, fl=[];
-      if(seenIp[k]){ if(r.ip&&!seenIp[k].has(r.ip)) fl.push('New IP'); if(r.country&&lastCountry[k]&&r.country!==lastCountry[k]) fl.push('New country'); }
-      (seenIp[k]=seenIp[k]||new Set()).add(r.ip); if(r.country) lastCountry[k]=r.country;
-      r._flags=fl;
+      const k=r.user_id, fl=[], dv=(r.browser||'')+'|'+(r.os||'');
+      const s=seen[k]=seen[k]||{ip:new Set(),dv:new Set(),n:0};
+      if(s.n){ if(r.ip&&!s.ip.has(r.ip)) fl.push('New IP'); if(!s.dv.has(dv)) fl.push('New device'); if(r.country&&lastCountry[k]&&r.country!==lastCountry[k]) fl.push('New country'); }
+      s.ip.add(r.ip); s.dv.add(dv); s.n++; if(r.country) lastCountry[k]=r.country; r._flags=fl;
     });
     _lg.rows=rows;
-  }catch(e){ _lg.rows=[]; showToast('Could not load login activity: '+(e.message||e),'error'); }
+    const D=lgDates(); if(!_lg.dial[D.mo]||!quiet){
+      const {data,error}=await sb.rpc('login_dial_secs',{p_from:D.mo+'T00:00:00+05:30',p_to:D.moNext+'T00:00:00+05:30'});
+      _lg.dial[D.mo]=error?[]:(data||[]);
+    }
+  }catch(e){ if(_lg.rows===null) _lg.rows=[]; showToast('Could not load login activity: '+(e.message||e),'error'); }
   _lg.busy=false; if(S.page==='loginlog') render();
 }
-function lgFilter(k,v){ _lg.f[k]=v; render(); }
+setInterval(()=>{ if(S.page==='loginlog'&&!document.hidden&&_lg.rows!==null) lgLoad(true); },60000);
+function lgSet(k,v){
+  if(k==='day'||k==='user'){ _lg[k]=v; if(k==='day'&&v&&!_lg.dial[lgDates().mo]){ lgLoadDial(); return; } }
+  else _lg.f[k]=v;
+  render();
+}
+async function lgLoadDial(){
+  const D=lgDates();
+  const {data}=await sb.rpc('login_dial_secs',{p_from:D.mo+'T00:00:00+05:30',p_to:D.moNext+'T00:00:00+05:30'});
+  _lg.dial[D.mo]=data||[]; render();
+}
+function lgPick(id,on){ on?_lg.sel.add(id):_lg.sel.delete(id); }
+function lgPickAll(on,ids){ ids.forEach(i=>on?_lg.sel.add(i):_lg.sel.delete(i)); render(); }
+async function lgDelete(){
+  const ids=[..._lg.sel]; if(!ids.length){ showToast('Tick the records you want to delete','error'); return; }
+  if(!confirm('Delete '+ids.length+' login record(s)? This cannot be undone.')) return;
+  const {error}=await sb.rpc('login_log_delete',{p_ids:ids});
+  if(error){ showToast('Could not delete: '+error.message,'error'); return; }
+  _lg.sel=new Set(); showToast('Deleted '+ids.length+' record(s)','success'); _lg.rows=null; render();
+}
+function lgFmtHM(s){ s=Math.round(s||0); return s>=60?Math.floor(s/3600)+'h '+String(Math.floor(s%3600/60)).padStart(2,'0')+'m':(s>0?'<1m':'—'); }
+function lgFmtHMS(s){ s=Math.max(0,Math.round(s||0)); const p=n=>String(n).padStart(2,'0'); return p(Math.floor(s/3600))+':'+p(Math.floor(s%3600/60))+':'+p(s%60); }
+function lgCompute(){
+  const D=lgDates(), all=_lg.rows||[], now=Date.now();
+  const end=r=>new Date(r.logout_at||r.last_seen||r.login_at).getTime();
+  const secs=r=>Math.max(0,(end(r)-new Date(r.login_at).getTime())/1000);
+  const mine=r=>!_lg.user||r.user_id===_lg.user;
+  const sum={};
+  all.forEach(r=>{ const d=lgDay(r.login_at); if(d<D.mo||d>=D.moNext||!mine(r)) return;
+    const u=sum[r.user_id]=sum[r.user_id]||{id:r.user_id,name:r.agent_name||r.username||'—',h_day:0,h_week:0,h_month:0,days:new Set(),logins:0,d_day:0,d_week:0,d_month:0,dd_week:new Set(),dd_month:new Set()};
+    const s=secs(r); u.h_month+=s; u.days.add(d); u.logins++; if(d===D.day) u.h_day+=s; if(d>=D.wk&&d<=D.wkEnd) u.h_week+=s; });
+  (_lg.dial[D.mo]||[]).forEach(x=>{ const u=sum[x.agent_id]; if(!u) return; const s=Number(x.secs)||0, d=String(x.d).slice(0,10);
+    u.d_month+=s; u.dd_month.add(d); if(d>=D.wk&&d<=D.wkEnd){ u.d_week+=s; u.dd_week.add(d); } if(d===D.day) u.d_day+=s; });
+  const list=all.filter(r=>lgDay(r.login_at)===D.day&&mine(r)).map(r=>Object.assign({},r,{on:!r.logout_at&&now-new Date(r.last_seen||r.login_at).getTime()<=150000,secs:secs(r),end:r.logout_at||r.last_seen||r.login_at}));
+  const online={}; all.forEach(r=>{ if(!r.logout_at&&now-new Date(r.last_seen||r.login_at).getTime()<=150000) (online[r.user_id]=online[r.user_id]||[]).push(r); });
+  return {D,sum:Object.values(sum).sort((a,b)=>String(a.name).localeCompare(String(b.name))),list,online};
+}
+function lgCsv(name,head,rows){
+  const q=v=>'"'+String(v==null?'':v).replace(/"/g,'""')+'"';
+  const blob=new Blob(['﻿'+[head].concat(rows).map(r=>r.map(q).join(',')).join('\r\n')],{type:'text/csv'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name; document.body.appendChild(a); a.click(); setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},500);
+}
+function lgExport(kind){
+  const {D,sum,list}=lgCompute();
+  if(kind==='sessions') lgCsv('login_activity_'+D.day+'.csv',['User','Login (IST)','Logout / last seen (IST)','Time online','IP','Location','Device','Browser','OS','Flags'],
+    list.map(r=>[r.agent_name,lgIst(r.login_at,{dateStyle:'medium',timeStyle:'medium'}),lgIst(r.end,{dateStyle:'medium',timeStyle:'medium'}),lgFmtHMS(r.secs),r.ip,[r.city,r.region,r.country].filter(Boolean).join(', '),r.device,r.browser,r.os,(r._flags||[]).join(' / ')]));
+  else lgCsv('login_summary_'+D.day+'.csv',['User','Login hours (day)','Login hours (week)','Login hours (month)','Active days (month)','Logins (month)','Dialling (day)','Dialling (week)','Avg dialling/day (week)','Dialling (month)','Avg dialling/day (month)'],
+    sum.map(r=>[r.name,lgFmtHMS(r.h_day),lgFmtHMS(r.h_week),lgFmtHMS(r.h_month),r.days.size,r.logins,lgFmtHMS(r.d_day),lgFmtHMS(r.d_week),lgFmtHMS(r.dd_week.size?r.d_week/r.dd_week.size:0),lgFmtHMS(r.d_month),lgFmtHMS(r.dd_month.size?r.d_month/r.dd_month.size:0)]));
+}
 function renderLoginLog(){
-  const title='<div class="pg-title" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">🔐 Login Activity <span style="font-size:12px;font-weight:400;color:var(--text2)">Where and when each agent signs in. Location is approximate (from IP address), not an exact address.</span><button class="btn btn-sm btn-outline" onclick="_lg.rows=null;render()">↻ Refresh</button></div>';
+  const title='<div class="pg-title" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">🔐 Login Activity <span style="font-size:12px;font-weight:400;color:var(--text2)">Sessions, location &amp; dialling time. Location is approximate (from IP address).</span><button class="btn btn-sm btn-outline" onclick="_lg.rows=null;render()">↻ Refresh</button></div>';
   if(!isSA()&&!(S.user&&S.user.role==='admin')) return title+'<div class="card">Only admins can see this page.</div>';
   if(_lg.rows===null){ if(!_lg.busy) setTimeout(lgLoad,0); return title+'<div class="card" style="text-align:center;padding:30px;color:var(--text2)">⏳ Loading…</div>'; }
-  const f=_lg.f, all=_lg.rows;
-  const ist=(iso,o)=>new Date(iso).toLocaleString('en-GB',Object.assign({timeZone:'Asia/Kolkata'},o));
-  const day=iso=>ist(iso,{year:'numeric',month:'2-digit',day:'2-digit'}).split('/').reverse().join('-');   // yyyy-mm-dd in IST
-  const q=(f.q||'').toLowerCase();
-  const rows=all.filter(r=>(!f.agent||r.user_id===f.agent)&&(!f.from||day(r.login_at)>=f.from)&&(!f.to||day(r.login_at)<=f.to)&&(!f.flagged||(r._flags||[]).length)
-    &&(!q||[r.agent_name,r.username,r.ip,r.country,r.region,r.city,r.browser,r.os].join(' ').toLowerCase().includes(q)));
+  const {D,sum,list,online}=lgCompute(), all=_lg.rows, f=_lg.f, q=(f.q||'').toLowerCase();
+  const rows=list.filter(r=>(!f.flagged||(r._flags||[]).length)&&(!q||[r.agent_name,r.username,r.ip,r.country,r.region,r.city,r.browser,r.os].join(' ').toLowerCase().includes(q)));
   const agents=[...new Map(all.map(r=>[r.user_id,r.agent_name||r.username||r.user_id])).entries()].sort((a,b)=>String(a[1]).localeCompare(String(b[1])));
-  const todayIst=day(new Date().toISOString());
-  const todayRows=all.filter(r=>day(r.login_at)===todayIst);
-  const cnt={}; all.forEach(r=>{cnt[r.user_id]=(cnt[r.user_id]||0)+1;});
-  const stat=(l,v)=>`<div class="card" style="padding:12px 16px"><div style="font-size:11px;color:var(--text2);font-weight:700;text-transform:uppercase">${l}</div><div style="font-size:24px;font-weight:800">${v}</div></div>`;
   const sel='padding:7px 8px;border:1.5px solid var(--border);border-radius:var(--r);font-size:12px;outline:none';
-  const body=rows.slice(0,1000).map(r=>`<tr>
-    <td style="white-space:nowrap">${ist(r.login_at,{day:'2-digit',month:'short',year:'numeric'})}</td>
-    <td style="white-space:nowrap;font-weight:700">${ist(r.login_at,{hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:true})}</td>
-    <td style="font-weight:700">${h(r.agent_name||'—')}<div style="font-size:10px;color:var(--text3)">${h(r.username||'')} · ${cnt[r.user_id]} login${cnt[r.user_id]===1?'':'s'}</div></td>
+  const stat=(l,v,red)=>`<div class="card" style="padding:12px 16px"><div style="font-size:11px;color:var(--text2);font-weight:700;text-transform:uppercase">${l}</div><div style="font-size:24px;font-weight:800;${red?'color:#dc2626':''}">${v}</div></div>`;
+  const onlineIds=Object.keys(online), multi=onlineIds.filter(u=>online[u].length>1);
+  const flagsN=list.filter(r=>(r._flags||[]).length).length, totDay=sum.reduce((a,r)=>a+r.h_day,0);
+  const alerts=multi.map(u=>`<div class="card" style="background:#fffbeb;border-color:#f59e0b;margin-bottom:8px;font-size:12px">⚠️ <b>${h(online[u][0].agent_name)}</b> is logged in ${online[u].length} times right now: ${online[u].map(s=>h([s.city,s.country].filter(Boolean).join(', ')||'Unknown location')+' ('+h(s.ip||'')+', '+h(s.device||'')+')').join(' | ')}</div>`).join('');
+  const sumRows=sum.map(r=>{const cw=r.dd_week.size,cm=r.dd_month.size;return `<tr><td style="font-weight:700">${h(r.name)}</td>
+    <td>${lgFmtHM(r.h_day)}</td><td>${lgFmtHM(r.h_week)}</td><td>${lgFmtHM(r.h_month)} <span style="color:var(--text3);font-size:11px">· ${r.days.size}d</span></td>
+    <td>${lgFmtHM(r.d_day)}</td><td>${lgFmtHM(r.d_week)}</td><td>${lgFmtHM(cw?r.d_week/cw:0)}</td><td>${lgFmtHM(r.d_month)}</td><td>${lgFmtHM(cm?r.d_month/cm:0)}</td></tr>`;}).join('');
+  const ids=rows.map(r=>r.id);
+  const body=rows.map(r=>`<tr><td><input type="checkbox" ${_lg.sel.has(r.id)?'checked':''} onchange="lgPick(${r.id},this.checked)"></td>
+    <td style="font-weight:700">${h(r.agent_name||'—')}<div style="font-size:10px;color:var(--text3)">${h(r.username||'')}</div>${(r._flags||[]).map(x=>`<span style="background:#fee2e2;color:#991b1b;font-size:10px;font-weight:700;padding:2px 7px;border-radius:9px;margin-right:3px;white-space:nowrap">🚩 ${x}</span>`).join('')}</td>
+    <td style="white-space:nowrap"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${r.on?'#16a34a':'#9ca3af'};margin-right:5px"></span>${r.on?'Online':(r.logout_at?'Logged out':'Closed / timed out')}</td>
+    <td>${h([r.city,r.region,r.country].filter(Boolean).join(', ')||'Unknown')}</td>
     <td style="font-family:monospace;font-size:11px">${h(r.ip||'—')}</td>
-    <td>${h([r.city,r.region,r.country].filter(Boolean).join(', ')||'—')}</td>
     <td style="font-size:11px">${h(r.device||'')} · ${h(r.browser||'')}<div style="color:var(--text3)">${h(r.os||'')}</div></td>
-    <td>${(r._flags||[]).map(x=>`<span style="background:#fee2e2;color:#991b1b;font-size:10px;font-weight:700;padding:2px 8px;border-radius:9px;margin-right:4px;white-space:nowrap">🚩 ${x}</span>`).join('')}</td></tr>`).join('');
+    <td style="white-space:nowrap">${lgIst(r.login_at,{hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:true})}</td>
+    <td style="white-space:nowrap">${r.on?'—':lgIst(r.end,{hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:true})}</td>
+    <td style="text-align:right;font-weight:700;white-space:nowrap">${lgFmtHMS(r.secs)}</td></tr>`).join('');
   return title+`
-  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:14px">
-    ${stat('Logins today (IST)',todayRows.length)}${stat('Agents logged in today',new Set(todayRows.map(r=>r.user_id)).size)}${stat('Flagged (90 days)',all.filter(r=>(r._flags||[]).length).length)}${stat('Logins (90 days)',all.length)}
+  <div class="card" style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px">
+    <select onchange="lgSet('user',this.value)" style="${sel}"><option value="">All users</option>${agents.map(([id,n])=>`<option value="${h(id)}" ${_lg.user===id?'selected':''}>${h(n)}</option>`).join('')}</select>
+    <input type="date" value="${D.day}" onchange="lgSet('day',this.value)" style="${sel}">
+    <button class="btn btn-sm btn-outline" onclick="lgExport('sessions')">⬇ Login records (CSV)</button>
+    <button class="btn btn-sm btn-outline" onclick="lgExport('summary')">⬇ Hours &amp; dialling (CSV)</button>
   </div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:14px">
+    ${stat('Online now',onlineIds.length,true)}${stat('Logins on '+lgIst(D.day+'T12:00:00Z',{day:'2-digit',month:'short'}),list.length)}${stat('Total login time (day)',lgFmtHM(totDay))}${stat('New IP / device',flagsN,flagsN>0)}
+  </div>${alerts}
+  <div class="card" style="margin-bottom:14px"><div style="font-weight:800;margin-bottom:8px">📊 Hours &amp; dialling time <span style="font-weight:400;font-size:12px;color:var(--text2)">week of ${lgIst(D.wk+'T12:00:00Z',{day:'2-digit',month:'short'})} · ${lgIst(D.day+'T12:00:00Z',{month:'long',year:'numeric'})}</span></div>
+    <div class="tbl-wrap"><table><thead class="dark-thead"><tr><th rowspan="2">User</th><th colspan="3" style="text-align:center">Login hours</th><th colspan="5" style="text-align:center">Time on dialling</th></tr>
+    <tr><th>Day</th><th>Week</th><th>Month</th><th>Day</th><th>Week</th><th>Avg / day (week)</th><th>Month</th><th>Avg / day (month)</th></tr></thead>
+    <tbody>${sumRows||'<tr><td colspan="9" style="text-align:center;padding:20px;color:var(--text2)">No logins this month.</td></tr>'}</tbody></table></div>
+    <p style="font-size:11px;color:var(--text2);margin:8px 0 0">Dialling time counts the gaps (up to 10 minutes each) between an agent's consecutive CRM actions such as dials and dispositions; breaks and longer idle gaps are not counted. Averages are per day the agent actually dialled. Login hours before this update were not tracked beyond the sign-in moment.</p></div>
   <div class="card">
-    <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px">
-      <select onchange="lgFilter('agent',this.value)" style="${sel}"><option value="">All Agents</option>${agents.map(([id,n])=>`<option value="${h(id)}" ${f.agent===id?'selected':''}>${h(n)}</option>`).join('')}</select>
-      <label style="font-size:12px">From <input type="date" value="${h(f.from)}" onchange="lgFilter('from',this.value)" style="${sel}"></label>
-      <label style="font-size:12px">To <input type="date" value="${h(f.to)}" onchange="lgFilter('to',this.value)" style="${sel}"></label>
-      <input placeholder="🔍 IP, city, country, browser…" value="${h(f.q)}" onchange="lgFilter('q',this.value)" style="${sel};width:200px">
-      <label style="font-size:12px;display:flex;gap:4px;align-items:center"><input type="checkbox" ${f.flagged?'checked':''} onchange="lgFilter('flagged',this.checked)"> Only flagged (new IP / new country)</label>
-    </div>
-    <div class="tbl-wrap" style="max-height:560px"><table><thead class="dark-thead"><tr><th>Date</th><th>Time (IST)</th><th>Agent</th><th>IP Address</th><th>Location (approx.)</th><th>Device / Browser</th><th>Alert</th></tr></thead>
-    <tbody>${body||'<tr><td colspan="7" style="text-align:center;padding:24px;color:var(--text2)">No logins match.</td></tr>'}</tbody></table></div>
-    <p style="font-size:11px;color:var(--text2);margin:8px 0 0">${rows.length>1000?'Showing the latest 1,000 of '+rows.length.toLocaleString()+'. ':''}Logins are recorded from the day this feature went live. Flags compare each login with that agent's earlier ones. IP-based location is approximate and can be wrong (VPNs, mobile networks, company networks).</p>
+    <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:10px"><b>🕘 Login records</b>
+      <input placeholder="🔍 IP, city, browser…" value="${h(f.q)}" onchange="lgSet('q',this.value)" style="${sel};width:180px">
+      <label style="font-size:12px;display:flex;gap:4px;align-items:center"><input type="checkbox" ${f.flagged?'checked':''} onchange="lgSet('flagged',this.checked)"> Only flagged</label>
+      <button class="btn btn-sm btn-red" style="margin-left:auto" onclick="lgDelete()">🗑 Delete selected${_lg.sel.size?' ('+_lg.sel.size+')':''}</button></div>
+    <div class="tbl-wrap" style="max-height:520px"><table><thead class="dark-thead"><tr><th><input type="checkbox" onchange='lgPickAll(this.checked,${JSON.stringify(ids)})'></th><th>User</th><th>Status</th><th>Location</th><th>IP</th><th>Device</th><th>Login</th><th>Logout / last seen</th><th style="text-align:right">Time online</th></tr></thead>
+    <tbody>${body||'<tr><td colspan="9" style="text-align:center;padding:24px;color:var(--text2)">No logins on this day.</td></tr>'}</tbody></table></div>
+    <p style="font-size:11px;color:var(--text2);margin:8px 0 0">Times are IST. Flags compare each login with that user's earlier ones. IP-based location is approximate (VPNs, mobile networks and office networks can show a different city).</p>
   </div>`;
 }
 
