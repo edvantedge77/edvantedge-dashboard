@@ -554,7 +554,7 @@ tr:last-child td{border-bottom:none;}tr:hover td{background:#fafafa;cursor:point
 // login screen and logged to the console, so a quick hard refresh + glance
 // tells him definitively whether Netlify is actually serving THIS file yet,
 // instead of guessing at whether a reported bug was ever really fixed.
-const BUILD_STAMP='2026-11-14-leadlists-bulkdelete';
+const BUILD_STAMP='2026-11-15-assign-inv-login';
 console.log('[EdvantEdge CRM] build', BUILD_STAMP);
 const SB_URL='https://qyubbieikviesfcorusq.supabase.co';
 const SB_KEY=['eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF5','dWJiaWVpa3ZpZXNmY29ydXNxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU0OTkzNjEsImV4cCI6MjA5MTA3NTM2MX0.t_4mZWd_Qo1KHrGN9imMnnpn6UkLtLFrOeI2Q9lPD08'].join('');
@@ -1690,6 +1690,7 @@ async function doLogin(){
     // (The iframe's user_authentication postMessage fires automatically when
     //  the agent is logged into Dialpad; dpPostLoginCheck() handles the lock.)
     S.dialerId=null; // will be set by dpPostLoginCheck() if Dialpad already open
+    trackLogin(authData.session?.access_token);   // records IP / location / device (server-side, never blocks login)
     S.user=data;S.page='dashboard';S.loginTime=Date.now();S.todayDisps={};
     S.sessionStart=new Date().toISOString(); S.sessionDisps={};
     // Load today's activity counts from DB (survives page refresh)
@@ -1818,7 +1819,7 @@ async function goPage(p){
   render();
   if(mobileBlockedForUser()) return;   // no data loads for a blocked session
   if(p==='dashboard'){ loadDash().then(()=>{ render(); onDashboardReady(); }).catch(()=>render()); if(isSA()){ loadAllocOverview(); loadAccessAlerts(); } }
-  else if(p==='leads'){ S.clToday=false; S.cl=null; S.viewMode='list'; render(); clInit(isSA()).catch(e=>console.error('clInit error:',e)); }
+  else if(p==='leads'){ S.leadsTab='leads'; S.clToday=false; S.cl=null; S.viewMode='list'; render(); clInit(isSA()).catch(e=>console.error('clInit error:',e)); }
   else if(p==='kitty'){ S.viewMode='list'; S.leadView='kitty'; loadLeads(true).catch(()=>{}); }
   else if(p==='freshleads'){ loadFreshLeads().catch(()=>{}); }
   else if(p==='workedleads'){ wlLoad(); }
@@ -1848,7 +1849,7 @@ async function goPage(p){
   // to "All Time" the first time, via the existing bkFrom/bkTo sentinel fallback).
   else if(p==='bookings'){ loadAgentBookingLeads().catch(()=>{}); }
   else if(p==='agentkitty'){ loadAgentKitty(); }
-  else if(p==='agentinventory'){ _invAgents=[];_invCurAgent=null;_invAllLeads=[];_invFiltered=[];_invPage=1;invLoadAgents(); }
+  else if(p==='agentinventory'){ S.page='leads'; S.leadsTab='inv'; _invAgents=[];_invCurAgent=null;_invAllLeads=[];_invFiltered=[];_invPage=1;render();invLoadAgents(); }
   else if(p==='assign'){ loadAsgnData().then(()=>render()).catch(()=>{}); }
   else if(p==='reports') loadReportData().catch(()=>{});
   else if(p==='dispanalysis') loadDAReport().catch(()=>{});
@@ -1863,6 +1864,7 @@ async function goPage(p){
   else if(p==='teamchat'){ chatInit(); }
   else if(p==='import')  { render(); } // Static page
   else if(p==='cdr')     { _cdr.batches=null; render(); }
+  else if(p==='loginlog'){ _lg.rows=null; render(); }
   else if(p==='leadlists'){ _ll.rows=null; render(); }
   else if(p==='export')  { render(); } // Static page
   else if(p==='bulkedit'){ if(!S.users?.length) loadUsers().then(()=>render()).catch(()=>{}); }
@@ -2775,10 +2777,9 @@ function renderExport(){
 const DIAL_FILTER_MAX=10;
 function dialLabel(n){ n=Number(n)||0; return n===0?'Fresh Lead':'Dialled '+n+(n===1?' Time':' Times'); }
 function dialFilterOptionsHTML(){
-  let o='<option value="">All Dials</option><option value="0">Dials 0 – Fresh Lead</option>';
-  for(let i=1;i<=DIAL_FILTER_MAX;i++) o+='<option value="'+i+'">Dials '+i+'</option>';
-  return o+'<option value="'+(DIAL_FILTER_MAX+1)+'+">Dials '+(DIAL_FILTER_MAX+1)+'+</option>';
+  return '<option value="">All Dial Counts</option><option value="0">Dial Count 0 – Never Dialed</option><option value="1">Dial Count 1</option><option value="2">Dial Count 2</option><option value="3">Dial Count 3</option><option value="4+">Dial Count 4+</option><option value="custom">Custom range…</option>';
 }
+function clDialsChanged(sel){ const r=document.getElementById('cl-dials-range'); if(r) r.style.display=sel.value==='custom'?'inline-flex':'none'; clApplyFilter(); }
 let _bkMap=null,_bkMapAt=0;
 function bkPhoneKey(p){ let d=String(p==null?'':p).replace(/\D/g,''); if(d.startsWith('00')) d=d.slice(2); return d; }
 async function clEnsureBookMap(force){
@@ -2807,7 +2808,7 @@ function clBookCounts(phone){
 // ══════════════════════════════════════════════════════════════════
 // CDR CHECK — upload mobile-number lists (no duplicate check) → dial counts on matching leads
 // ══════════════════════════════════════════════════════════════════
-let _cdr={batches:null,busy:'',file:null,pasted:'',last:null,pending:null};
+let _cdr={batches:null,busy:'',pct:0,error:'',file:null,pasted:'',last:null,pending:null};
 async function cdrLoad(){
   try{
     const {data,error}=await sb.from('cdr_batches').select('*').order('id',{ascending:false}).limit(50);
@@ -2828,6 +2829,17 @@ function cdrNumbersFromRows(rows){
   });
   return out;
 }
+// Adds (sign=1) / takes back (sign=-1) an upload's dials on the leads, a few thousand records per database call
+async function cdrRunChunks(bid,sign,total){
+  let rem=Infinity, first=true, start=0;
+  while(rem>0){
+    const {data,error}=await sb.rpc('cdr_apply_chunk',{bid:bid,sign:sign,lim:2000});
+    if(error) throw error;
+    rem=Number(data)||0; if(first){ start=rem; first=false; }
+    const base=total||start, doneN=Math.max(0,Math.min(base,base-rem));
+    if(base>0){ _cdr.pct=sign===1?Math.round(90+9*doneN/base):Math.round(100*doneN/base); const bar=document.getElementById('cdr-bar'); if(bar) bar.style.width=_cdr.pct+'%'; const el=document.getElementById('cdr-busy'); if(el) el.textContent=(sign===1?'Updating dial counts on leads… ':'Taking back dial counts… ')+doneN.toLocaleString()+' / '+base.toLocaleString(); }
+  }
+}
 // Step 1: read the file/pasted text and show the record count (nothing is saved yet)
 async function cdrUpload(){
   if(_cdr.busy) return;
@@ -2839,7 +2851,10 @@ async function cdrUpload(){
     if(paste){ nums=nums.concat(cdrNumbersFromRows(paste.split(/\r?\n/))); label=label||('Pasted numbers '+new Date().toISOString().slice(0,16).replace('T',' ')); }
     if(!nums.length) throw new Error('No mobile numbers found. Choose a file or paste numbers.');
     const uniq=new Set(nums).size;
-    _cdr.pending={name:label,nums,uniq}; _cdr.busy=''; render();
+    // fingerprint of the exact list of numbers: lets us warn if the same upload is saved twice
+    let hsh=2166136261; for(let i=0;i<nums.length;i++){ const x=nums[i]; for(let j=0;j<x.length;j++){ hsh^=x.charCodeAt(j); hsh=Math.imul(hsh,16777619)>>>0; } hsh^=44; hsh=Math.imul(hsh,16777619)>>>0; }
+    const fp=nums.length+'-'+uniq+'-'+hsh.toString(16);
+    _cdr.error=''; _cdr.pending={name:label,nums,uniq,fp}; _cdr.busy=''; render();
   }catch(e){ _cdr.busy=''; render(); showToast('⚠️ '+(e.message||e),'error'); }
 }
 function cdrCancel(){ _cdr.pending=null; render(); }
@@ -2848,31 +2863,34 @@ async function cdrConfirm(){
   const P=_cdr.pending; if(!P||_cdr.busy) return;
   const total=P.nums.length; let bid=null;
   try{
-    _cdr.busy='Saving 0 / '+total.toLocaleString()+' records…'; render();
-    const {data:b,error:be}=await sb.from('cdr_batches').insert({name:P.name.slice(0,190),total_numbers:P.uniq,total_dials:total,created_by:S.user?.id||null}).select().single();
+    // same list already saved? ask before saving it again
+    const {data:same}=await sb.from('cdr_batches').select('id,name,created_at').eq('fingerprint',P.fp).limit(1);
+    if(same&&same.length&&!confirm('This looks identical to an upload already saved:\n"'+same[0].name+'" ('+String(same[0].created_at).slice(0,16).replace('T',' ')+')\n\nSaving it again will count every dial a second time.\n\nSave it again anyway?')) return;
+    _cdr.error=''; _cdr.pct=0; _cdr.busy='Saving 0 / '+total.toLocaleString()+' records…'; render();
+    const {data:b,error:be}=await sb.from('cdr_batches').insert({name:P.name.slice(0,190),total_numbers:P.uniq,total_dials:total,fingerprint:P.fp,created_by:S.user?.id||null}).select().single();
     if(be) throw be; bid=b.id;
     const CH=5000, jobs=[]; for(let i=0;i<total;i+=CH) jobs.push(i);
     let done=0;
     const worker=async()=>{ while(jobs.length){ const i=jobs.shift(); const rows=P.nums.slice(i,i+CH).map(n=>({batch_id:bid,mobile_norm:n,cnt:1}));
       const {error}=await sb.from('cdr_rows').insert(rows); if(error) throw error;
-      done+=rows.length; _cdr.busy='Saving '+done.toLocaleString()+' / '+total.toLocaleString()+' records…'; const el=document.getElementById('cdr-busy'); if(el) el.textContent=_cdr.busy; } };
+      done+=rows.length; _cdr.pct=Math.round(done/total*90); _cdr.busy='Saving '+done.toLocaleString()+' / '+total.toLocaleString()+' records…'; const el=document.getElementById('cdr-busy'); if(el) el.textContent=_cdr.busy; const bar=document.getElementById('cdr-bar'); if(bar) bar.style.width=_cdr.pct+'%'; } };
     await Promise.all([worker(),worker(),worker()]);
     // validate: what is stored must equal what was in the file
     _cdr.busy='Checking the upload…'; render();
     const {count,error:ce}=await sb.from('cdr_rows').select('id',{count:'exact',head:true}).eq('batch_id',bid);
     if(ce) throw ce;
     if(count!==total){ await sb.from('cdr_batches').delete().eq('id',bid); throw new Error('Check failed: file has '+total.toLocaleString()+' records but '+(count||0).toLocaleString()+' were saved. The upload was cancelled, nothing was kept — please try again.'); }
-    _cdr.busy='Updating dial counts on leads…'; render();
-    const {data:matched,error:ae}=await sb.rpc('cdr_apply_batch',{bid:bid,sign:1});
-    if(ae) throw ae;
-    _cdr.last={name:P.name,records:total,numbers:P.uniq,stored:count,matched:matched||0};
+    _cdr.pct=95; _cdr.busy='Updating dial counts on matching leads… (this can take up to a minute for big files)'; render();
+    await cdrRunChunks(bid,1,total);
+    _cdr.last={name:P.name,records:total,numbers:P.uniq,stored:count};
     _cdr.file=null; _cdr.pending=null; _cdr.busy='';
     if(S.cl){S.cl.counts=null;}
     showToast('✅ '+total.toLocaleString()+' records saved and verified');
     await cdrLoad();
   }catch(e){
-    if(bid){ try{ await sb.from('cdr_batches').delete().eq('id',bid); }catch(_){} }
-    _cdr.busy=''; render(); showToast('⚠️ '+(e.message||e),'error');
+    if(bid){ try{ await cdrRunChunks(bid,-1,0); }catch(_){} try{ await sb.from('cdr_batches').delete().eq('id',bid); }catch(_){} }   // undo any dials already added, then drop the half-saved upload
+    console.error('CDR save failed:',e);
+    _cdr.error='Save failed: '+(e.message||e)+' — nothing was kept. Please try again.'; _cdr.busy=''; render(); showToast('⚠️ '+_cdr.error,'error');
   }
 }
 async function cdrRemove(id){
@@ -2880,7 +2898,7 @@ async function cdrRemove(id){
   if(!confirm('Remove "'+b.name+'"?\n\nIts dials will be taken back from the leads.')) return;
   try{
     _cdr.busy='Removing…'; render();
-    const {error:ae}=await sb.rpc('cdr_apply_batch',{bid:id,sign:-1}); if(ae) throw ae;
+    await cdrRunChunks(id,-1,Number(b.total_dials)||0);
     const {error:de}=await sb.from('cdr_batches').delete().eq('id',id); if(de) throw de;
     _cdr.busy=''; _cdr.last=null; showToast('CDR list removed and its dials taken back');
     await cdrLoad();
@@ -2889,11 +2907,12 @@ async function cdrRemove(id){
 function renderCdr(){
   const title='<div class="pg-title" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">CDR Check <span style="font-size:12px;font-weight:400;color:var(--text2)">Upload only mobile numbers – we count how many times each number was dialed.</span></div>';
   if(_cdr.batches===null){ setTimeout(()=>{ if(_cdr.batches===null) cdrLoad(); },0); return title+'<div class="card" style="text-align:center;padding:30px;color:var(--text2)">⏳ Loading…</div>'; }
-  if(_cdr.busy) return title+'<div class="card" style="text-align:center;padding:40px"><div style="font-size:30px">⏳</div><div id="cdr-busy" style="margin-top:8px;font-weight:600">'+h(_cdr.busy)+'</div></div>';
+  if(_cdr.busy) return title+'<div class="card" style="text-align:center;padding:40px"><div style="font-size:30px;display:inline-block;animation:cdrspin 1.2s linear infinite">⏳</div><style>@keyframes cdrspin{to{transform:rotate(360deg)}}</style><div id="cdr-busy" style="margin-top:8px;font-weight:600">'+h(_cdr.busy)+'</div><div style="height:10px;background:#eef1f6;border-radius:6px;overflow:hidden;max-width:420px;margin:14px auto 0"><div id="cdr-bar" style="height:100%;width:'+(_cdr.pct||0)+'%;background:#27ae60;transition:width .2s"></div></div><div style="font-size:12px;color:var(--text2);margin-top:8px">Please keep this page open.</div></div>';
   const L=_cdr.last;
   const rows=(_cdr.batches||[]).map(b=>'<tr><td>'+h(b.name)+'</td><td style="text-align:right">'+Number(b.total_numbers||0).toLocaleString()+'</td><td style="text-align:right">'+Number(b.total_dials||0).toLocaleString()+'</td><td>'+h(String(b.created_at||'').slice(0,16).replace('T',' '))+'</td><td><button class="btn btn-outline btn-sm" style="color:#c0392b" onclick="cdrRemove('+b.id+')">🗑 Remove</button></td></tr>').join('');
   return title+`
-  ${L?`<div class="card" style="background:#ecfdf5;border:1px solid #a7f3d0;margin-bottom:14px"><b>✅ Saved &amp; verified: ${h(L.name)}</b><div style="font-size:13px;margin-top:4px">File had <b>${L.records.toLocaleString()}</b> records → <b>${L.stored.toLocaleString()}</b> saved (no duplicates skipped) · ${L.numbers.toLocaleString()} different numbers · ${L.matched.toLocaleString()} matching leads updated</div></div>`:''}
+  ${_cdr.error?`<div class="card" style="background:#fef2f2;border:1px solid #fecaca;color:#991b1b;margin-bottom:14px"><b>⚠️ ${h(_cdr.error)}</b></div>`:''}
+  ${L?`<div class="card" style="background:#ecfdf5;border:1px solid #a7f3d0;margin-bottom:14px"><b>✅ Saved &amp; verified: ${h(L.name)}</b><div style="font-size:13px;margin-top:4px">File had <b>${L.records.toLocaleString()}</b> records → <b>${L.stored.toLocaleString()}</b> saved (no duplicates skipped) · ${L.numbers.toLocaleString()} different numbers · dial counts updated on all matching leads</div></div>`:''}
   ${_cdr.pending?`<div class="card" style="background:#eff6ff;border:1px solid #bfdbfe;margin-bottom:14px"><b>📋 File checked: ${h(_cdr.pending.name)}</b>
     <div style="font-size:14px;margin:6px 0">Total records: <b style="font-size:20px">${_cdr.pending.nums.length.toLocaleString()}</b> &nbsp;·&nbsp; different numbers: <b>${_cdr.pending.uniq.toLocaleString()}</b> &nbsp;·&nbsp; repeated: <b>${(_cdr.pending.nums.length-_cdr.pending.uniq).toLocaleString()}</b></div>
     <div style="font-size:12px;color:var(--text2)">Every record will be saved — repeated numbers are counted as extra dials, none are skipped.</div>
@@ -3021,6 +3040,81 @@ async function blkDelete(){
     showToast('🗑 '+n.toLocaleString()+' leads deleted');
     if(S.cl?.mode==='roundrobin') clRoundRobin(0,true); else clLoadPage(0,true);
   }catch(e){ showToast('Delete error: '+(e.message||e),'error'); }
+}
+
+// ══════════════════════════════════════════════════════════════════
+// LOGIN ACTIVITY — admin-only history of every sign-in (IP, approximate location, device)
+// The record is written by the server (login-track function) at sign-in; nothing is typed by the agent
+// and no password or token is stored.
+// ══════════════════════════════════════════════════════════════════
+function trackLogin(token){
+  if(!token) return;
+  try{
+    fetch('/.netlify/functions/login-track',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},body:JSON.stringify({k:SB_KEY})}).catch(()=>{});
+  }catch(e){}   // tracking must never get in the way of logging in
+}
+let _lg={rows:null,busy:false,f:{agent:'',from:'',to:'',q:'',flagged:false}};
+async function lgLoad(){
+  _lg.busy=true; const rows=[];
+  try{
+    const since=new Date(Date.now()-90*86400000).toISOString();
+    for(let from=0;from<10000;from+=1000){
+      const {data,error}=await sb.from('crm_login_log').select('*').gte('login_at',since).order('login_at',{ascending:false}).range(from,from+999);
+      if(error) throw error; (data||[]).forEach(r=>rows.push(r)); if(!data||data.length<1000) break;
+    }
+    // flag changes: first time this agent is seen on an IP / in a country compared with their earlier logins
+    const seenIp={}, lastCountry={};
+    rows.slice().reverse().forEach(r=>{
+      const k=r.user_id, fl=[];
+      if(seenIp[k]){ if(r.ip&&!seenIp[k].has(r.ip)) fl.push('New IP'); if(r.country&&lastCountry[k]&&r.country!==lastCountry[k]) fl.push('New country'); }
+      (seenIp[k]=seenIp[k]||new Set()).add(r.ip); if(r.country) lastCountry[k]=r.country;
+      r._flags=fl;
+    });
+    _lg.rows=rows;
+  }catch(e){ _lg.rows=[]; showToast('Could not load login activity: '+(e.message||e),'error'); }
+  _lg.busy=false; if(S.page==='loginlog') render();
+}
+function lgFilter(k,v){ _lg.f[k]=v; render(); }
+function renderLoginLog(){
+  const title='<div class="pg-title" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">🔐 Login Activity <span style="font-size:12px;font-weight:400;color:var(--text2)">Where and when each agent signs in. Location is approximate (from IP address), not an exact address.</span><button class="btn btn-sm btn-outline" onclick="_lg.rows=null;render()">↻ Refresh</button></div>';
+  if(!isSA()&&!(S.user&&S.user.role==='admin')) return title+'<div class="card">Only admins can see this page.</div>';
+  if(_lg.rows===null){ if(!_lg.busy) setTimeout(lgLoad,0); return title+'<div class="card" style="text-align:center;padding:30px;color:var(--text2)">⏳ Loading…</div>'; }
+  const f=_lg.f, all=_lg.rows;
+  const ist=(iso,o)=>new Date(iso).toLocaleString('en-GB',Object.assign({timeZone:'Asia/Kolkata'},o));
+  const day=iso=>ist(iso,{year:'numeric',month:'2-digit',day:'2-digit'}).split('/').reverse().join('-');   // yyyy-mm-dd in IST
+  const q=(f.q||'').toLowerCase();
+  const rows=all.filter(r=>(!f.agent||r.user_id===f.agent)&&(!f.from||day(r.login_at)>=f.from)&&(!f.to||day(r.login_at)<=f.to)&&(!f.flagged||(r._flags||[]).length)
+    &&(!q||[r.agent_name,r.username,r.ip,r.country,r.region,r.city,r.browser,r.os].join(' ').toLowerCase().includes(q)));
+  const agents=[...new Map(all.map(r=>[r.user_id,r.agent_name||r.username||r.user_id])).entries()].sort((a,b)=>String(a[1]).localeCompare(String(b[1])));
+  const todayIst=day(new Date().toISOString());
+  const todayRows=all.filter(r=>day(r.login_at)===todayIst);
+  const cnt={}; all.forEach(r=>{cnt[r.user_id]=(cnt[r.user_id]||0)+1;});
+  const stat=(l,v)=>`<div class="card" style="padding:12px 16px"><div style="font-size:11px;color:var(--text2);font-weight:700;text-transform:uppercase">${l}</div><div style="font-size:24px;font-weight:800">${v}</div></div>`;
+  const sel='padding:7px 8px;border:1.5px solid var(--border);border-radius:var(--r);font-size:12px;outline:none';
+  const body=rows.slice(0,1000).map(r=>`<tr>
+    <td style="white-space:nowrap">${ist(r.login_at,{day:'2-digit',month:'short',year:'numeric'})}</td>
+    <td style="white-space:nowrap;font-weight:700">${ist(r.login_at,{hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:true})}</td>
+    <td style="font-weight:700">${h(r.agent_name||'—')}<div style="font-size:10px;color:var(--text3)">${h(r.username||'')} · ${cnt[r.user_id]} login${cnt[r.user_id]===1?'':'s'}</div></td>
+    <td style="font-family:monospace;font-size:11px">${h(r.ip||'—')}</td>
+    <td>${h([r.city,r.region,r.country].filter(Boolean).join(', ')||'—')}</td>
+    <td style="font-size:11px">${h(r.device||'')} · ${h(r.browser||'')}<div style="color:var(--text3)">${h(r.os||'')}</div></td>
+    <td>${(r._flags||[]).map(x=>`<span style="background:#fee2e2;color:#991b1b;font-size:10px;font-weight:700;padding:2px 8px;border-radius:9px;margin-right:4px;white-space:nowrap">🚩 ${x}</span>`).join('')}</td></tr>`).join('');
+  return title+`
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:14px">
+    ${stat('Logins today (IST)',todayRows.length)}${stat('Agents logged in today',new Set(todayRows.map(r=>r.user_id)).size)}${stat('Flagged (90 days)',all.filter(r=>(r._flags||[]).length).length)}${stat('Logins (90 days)',all.length)}
+  </div>
+  <div class="card">
+    <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px">
+      <select onchange="lgFilter('agent',this.value)" style="${sel}"><option value="">All Agents</option>${agents.map(([id,n])=>`<option value="${h(id)}" ${f.agent===id?'selected':''}>${h(n)}</option>`).join('')}</select>
+      <label style="font-size:12px">From <input type="date" value="${h(f.from)}" onchange="lgFilter('from',this.value)" style="${sel}"></label>
+      <label style="font-size:12px">To <input type="date" value="${h(f.to)}" onchange="lgFilter('to',this.value)" style="${sel}"></label>
+      <input placeholder="🔍 IP, city, country, browser…" value="${h(f.q)}" onchange="lgFilter('q',this.value)" style="${sel};width:200px">
+      <label style="font-size:12px;display:flex;gap:4px;align-items:center"><input type="checkbox" ${f.flagged?'checked':''} onchange="lgFilter('flagged',this.checked)"> Only flagged (new IP / new country)</label>
+    </div>
+    <div class="tbl-wrap" style="max-height:560px"><table><thead class="dark-thead"><tr><th>Date</th><th>Time (IST)</th><th>Agent</th><th>IP Address</th><th>Location (approx.)</th><th>Device / Browser</th><th>Alert</th></tr></thead>
+    <tbody>${body||'<tr><td colspan="7" style="text-align:center;padding:24px;color:var(--text2)">No logins match.</td></tr>'}</tbody></table></div>
+    <p style="font-size:11px;color:var(--text2);margin:8px 0 0">${rows.length>1000?'Showing the latest 1,000 of '+rows.length.toLocaleString()+'. ':''}Logins are recorded from the day this feature went live. Flags compare each login with that agent's earlier ones. IP-based location is approximate and can be wrong (VPNs, mobile networks, company networks).</p>
+  </div>`;
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -4424,10 +4518,13 @@ async function doAssign(){
   msg.innerHTML='<span style="font-size:12px;color:var(--text2)">Assigning...</span>';
   const{data,error}=await buildAsgnQ(sb.from('crm_leads').select('id')).limit(count);
   if(error||!data?.length){msg.innerHTML='<span style="color:var(--red);font-size:12px">No leads match</span>';return;}
-  await sb.from('crm_leads').update({agent_id:agId,updated_at:new Date().toISOString()}).in('id',data.map(r=>r.id));
   const ag=S.users.find(u=>u.id===agId);
-  msg.innerHTML=`<span style="color:#1e8449;font-size:12px">✓ ${data.length} leads → ${h(ag?.name)}</span>`;
-  showToast(`✓ ${data.length} leads assigned to ${ag?.name}`);
+  // only leads that are still unassigned are taken; the real number changed is reported
+  const {data:upd,error:ue}=await sb.from('crm_leads').update({agent_id:agId,agent_name:ag?.name||null,updated_at:new Date().toISOString()}).in('id',data.map(r=>r.id)).is('agent_id',null).select('id');
+  if(ue){msg.innerHTML='<span style="color:var(--red);font-size:12px">Assign failed: '+h(ue.message)+'</span>';return;}
+  const nDone=(upd||[]).length;
+  msg.innerHTML=`<span style="color:#1e8449;font-size:12px">✓ ${nDone} leads → ${h(ag?.name)}</span>`;
+  showToast(`✓ ${nDone} leads assigned to ${ag?.name}`);
   S.asgn=null;setTimeout(()=>goPage('assign'),2000);
 }
 
@@ -7027,7 +7124,7 @@ function renderAgentBookingsView(){
   +'<thead class="dark-thead"><tr>'
   +'<th>Parent Name</th><th>Child Name</th><th>Phone</th><th>Client</th>'
   +'<th>Country</th><th>Zone</th><th>Dataset</th><th>Agent</th>'
-  +'<th>Status / Outcome</th><th>Demo Date (Customer)</th><th style="position:sticky;right:0;background:#1A2D42;box-shadow:-4px 0 6px -2px rgba(0,0,0,.15)">Actions</th>'
+  +'<th>Status / Outcome</th><th>Demo Date &amp; Time (IST)</th><th style="position:sticky;right:0;background:#1A2D42;box-shadow:-4px 0 6px -2px rgba(0,0,0,.15)">Actions</th>'
   +'</tr></thead><tbody>'
   +(pageFiltered.length===0?'<tr><td colspan="11" style="text-align:center;padding:3rem;color:#8a9ab0">No bookings found</td></tr>'
   :pageFiltered.map(b=>{
@@ -7035,7 +7132,9 @@ function renderAgentBookingsView(){
     const bkSt=b.status||'Demo Scheduled';
     const bkO=BKO.find(o=>o.v===bkSt)||BKO[0];
     const ag=b.agent||'—';
-    const ddDisp=b.demo_date?bkFD(b.demo_date)+'<div style="font-size:10px;color:#8a9ab0;margin-top:1px">'+(b.demo_time_ist?bkAP(b.demo_time_ist)+' IST':'')+'</div>':'—';
+    // IST date + IST time shown together (demo_date is the customer's local date, so it must not be paired with the IST time)
+    const _istD=b.demo_date_ist||b.demo_date;
+    const ddDisp=_istD?bkFD(_istD)+'<div style="font-size:10px;color:#8a9ab0;margin-top:1px">'+(b.demo_time_ist?bkAP(b.demo_time_ist)+' IST':'')+'</div>':'—';
     return '<tr>'
       +'<td data-label="Parent Name" style="font-weight:700">'+h(b.parent_name||'—')+'</td>'
       +'<td data-label="Child Name">'+h(b.child_name||'—')+'</td>'
@@ -9883,8 +9982,8 @@ function renderApp(){
     {id:'performance',icon:'📊',label:'Performance'},
     {id:'bookings',icon:'📋',label:'Bookings'},
     {id:'cdr',icon:'📞',label:'CDR Check'},
+    {id:'loginlog',icon:'🔐',label:'Login Activity'},
     {id:'agentkitty',icon:'🎯',label:'Agent Kitty'},
-    {id:'agentinventory',icon:'📦',label:'Agent Inventory'},
     {id:'todayleads',icon:'📅',label:"Today's Leads"},
     {id:'quality',icon:'✅',label:'Quality'},
     {id:'promptmanager',icon:'🧠',label:'Prompt Manager'},
@@ -10026,7 +10125,7 @@ function renderApp(){
   </div>`;
 }
 function renderSAPages(){
-  const pages={dashboard:renderSADash,leads:renderSALeads,assign:renderAssign,agents:renderAgents,bulkedit:()=>{ goPage('datamanage'); return ''; },datamanage:renderDataManage,attendance:renderAttendance,performance:renderPerformance,bookings:renderBookings,agentkitty:renderAdminAgentKitty,agentinventory:renderAgentInventory,freshleads:renderFreshLeads,todayleads:renderAdminTodayLeads,reports:renderReports,workedleads:renderWorkedLeads,dispanalysis:renderDispAnalysis,export:renderExport,import:renderImport,cdr:renderCdr,leadlists:renderLeadLists,settings:renderSettings,addlead:renderAddLeadPage,editlead:renderEditLeadPage,
+  const pages={dashboard:renderSADash,leads:renderSALeads,assign:renderAssign,agents:renderAgents,bulkedit:()=>{ goPage('datamanage'); return ''; },datamanage:renderDataManage,attendance:renderAttendance,performance:renderPerformance,bookings:renderBookings,agentkitty:renderAdminAgentKitty,agentinventory:renderAgentInventory,freshleads:renderFreshLeads,todayleads:renderAdminTodayLeads,reports:renderReports,workedleads:renderWorkedLeads,dispanalysis:renderDispAnalysis,export:renderExport,import:renderImport,cdr:renderCdr,loginlog:renderLoginLog,leadlists:renderLeadLists,settings:renderSettings,addlead:renderAddLeadPage,editlead:renderEditLeadPage,
     hrms_overview:renderHRMSOverview,hrms_attendance:renderHRMSAttendance,hrms_leaves:renderHRMSLeaves,hrms_salary:renderHRMSSalary,hrms_increment:renderHRMSIncrement,
     quality:renderQualityPage,promptmanager:renderPromptManager,
     teamchat:renderTeamChat,
@@ -10702,6 +10801,16 @@ var _invAgents=[], _invCurAgent=null, _invAllLeads=[], _invFiltered=[], _invPage
 var _invSelIds=new Set(), _invLoading=false;
 const INV_PAGE=100;
 
+function invViewActive(){ return S.page==='agentinventory'||(S.page==='leads'&&S.leadsTab==='inv'); }
+function clSetTab(t){
+  S.leadsTab=t;
+  if(t==='inv'){ _invAgents=[];_invCurAgent=null;_invAllLeads=[];_invFiltered=[];_invPage=1; render(); invLoadAgents(); }
+  else { render(); clInit(true).catch(e=>console.error('clInit error:',e)); }
+}
+function clTabsHTML(){
+  const b=(id,l)=>`<button onclick="clSetTab('${id}')" style="padding:7px 16px;border-radius:16px;font-size:12px;font-weight:700;cursor:pointer;border:none;${(S.leadsTab||'leads')===id?'background:#1a2535;color:#fff':'background:#eef1f6;color:#44546a'}">${l}</button>`;
+  return `<div style="display:flex;gap:8px;margin-bottom:12px">${b('leads','≡ Leads')}${b('inv','📦 Agent Inventory')}</div>`;
+}
 function renderAgentInventory(){
   return _invCurAgent ? renderInvDetail() : renderInvMain();
 }
@@ -10749,7 +10858,7 @@ function renderInvMain(){
 }
 
 async function invLoadAgents(){
-  _invLoading=true; if(S.page==='agentinventory') render();
+  _invLoading=true; if(invViewActive()) render();
   var agents2=(S.users||[]).filter(function(u){return u.role==='agent'&&u.active!==false;});
   var [tots,freshs]=await Promise.all([
     Promise.all(agents2.map(function(ag){return sb.from('crm_leads').select('id',{count:'exact',head:true}).eq('agent_id',ag.id);})),
@@ -10760,7 +10869,7 @@ async function invLoadAgents(){
     return {id:ag.id,name:ag.name,total:total,fresh:fresh,dialled:total-fresh};
   }).sort(function(a,b){return b.total-a.total;});
   _invLoading=false;
-  if(S.page==='agentinventory') render();
+  if(invViewActive()) render();
 }
 
 function renderInvDetail(){
@@ -15708,7 +15817,7 @@ function clFilterBarHTML(isAdmin){
       <select id="cl-eth"   onchange="clApplyFilter()" style="padding:7px 8px;border:1.5px solid var(--border);border-radius:var(--r);font-size:12px;outline:none"><option value="">All Ethnicity</option></select>
       <select id="cl-ds"    onchange="clApplyFilter()" style="padding:7px 8px;border:1.5px solid var(--border);border-radius:var(--r);font-size:12px;outline:none"><option value="">All Datasets</option></select>
       ${isAdmin?`<select id="cl-disp" onchange="clApplyFilter()" style="padding:7px 8px;border:1.5px solid var(--border);border-radius:var(--r);font-size:12px;outline:none">
-        <option value="Fresh">Fresh Only (no disposition)</option>
+        <option value="Fresh">Fresh – unassigned pool (no disposition)</option>
         <option value="all">── Show All (incl. worked) ──</option>
         <option value="Workable">Workable (Hot, CB, DS etc)</option>
         <option value="CoolingAll">Cooling 30 Days (all)</option>
@@ -15719,8 +15828,9 @@ function clFilterBarHTML(isAdmin){
         <option value="Fresh">Fresh</option>
         <option value="Recycled Leads">Recycled</option>
       </select>`}
-      ${isAdmin?`<select id="cl-agent" onchange="clApplyFilter()" style="padding:7px 8px;border:1.5px solid var(--border);border-radius:var(--r);font-size:12px;outline:none"><option value="">All Agents</option>${(S.users||[]).filter(u=>u.role==='agent'&&u.active!==false).map(a=>`<option value="${h(a.id)}">${h(a.name)}</option>`).join('')}</select>`:''}
-      ${isAdmin?`<select id="cl-dials" onchange="clApplyFilter()" title="Filter by how many times the lead was dialed (from CDR uploads)" style="padding:7px 8px;border:1.5px solid var(--border);border-radius:var(--r);font-size:12px;outline:none">${dialFilterOptionsHTML()}</select>`:''}
+      ${isAdmin?`<select id="cl-agent" onchange="clApplyFilter()" style="padding:7px 8px;border:1.5px solid var(--border);border-radius:var(--r);font-size:12px;outline:none"><option value="">All Agents</option><option value="__none">Unassigned only</option>${(S.users||[]).filter(u=>u.role==='agent'&&u.active!==false).map(a=>`<option value="${h(a.id)}">${h(a.name)}</option>`).join('')}</select>`:''}
+      ${isAdmin?`<select id="cl-dials" onchange="clDialsChanged(this)" title="Filter by how many times the lead was dialed (from CDR uploads)" style="padding:7px 8px;border:1.5px solid var(--border);border-radius:var(--r);font-size:12px;outline:none">${dialFilterOptionsHTML()}</select>`:''}
+      ${isAdmin?`<span id="cl-dials-range" style="display:none;gap:4px;align-items:center;font-size:12px">from <input id="cl-dmin" type="number" min="0" placeholder="min" style="width:60px;padding:6px;border:1.5px solid var(--border);border-radius:var(--r);font-size:12px"> to <input id="cl-dmax" type="number" min="0" placeholder="max" style="width:60px;padding:6px;border:1.5px solid var(--border);border-radius:var(--r);font-size:12px"></span>`:''}
       <button class="btn btn-red btn-sm" onclick="clApplyFilter()">Search →</button>
       <button class="btn btn-outline btn-sm" onclick="clClear()">Clear</button>
       ${isAdmin?`<button class="btn btn-outline btn-sm" onclick="clExportCSV()" id="cl-export-btn">⬇ Export CSV</button>`:''}
@@ -15729,7 +15839,7 @@ function clFilterBarHTML(isAdmin){
       <span style="font-size:12px;font-weight:700;color:var(--navy)">👤 Assign these filtered leads to:</span>
       <select id="cl-asg-agent" style="padding:7px 8px;border:1.5px solid var(--border);border-radius:var(--r);font-size:12px;outline:none"><option value="">Select agent…</option>${(S.users||[]).filter(u=>u.role==='agent'&&u.active!==false).map(a=>`<option value="${h(a.id)}">${h(a.name)}</option>`).join('')}</select>
       <input id="cl-asg-n" type="number" min="1" placeholder="How many (blank = all)" style="padding:7px 9px;border:1.5px solid var(--border);border-radius:var(--r);font-size:12px;outline:none;width:150px">
-      <button class="btn btn-sm" style="background:var(--navy);color:#fff" onclick="clAssignFiltered()">Assign</button>
+      <button class="btn btn-red btn-sm" onclick="clAssignFiltered()">Assign</button>
     </div>`:''}
   </div>`;
 }
@@ -15751,6 +15861,7 @@ function clSortBarHTML(){
 function renderCountryLeads(isAdmin){
   // ── CRITICAL: If a lead is open, show detail view (same as original renderAgentLeads) ──
   if(S.viewMode==='detail' && S.currentLead){ return renderLeadDetail(S.currentLead); }
+  if(isAdmin && S.leadsTab==='inv') return clTabsHTML()+renderAgentInventory();
 
   if(!S.cl) S.cl={country:(isAdmin||S.clToday)?'Australia':null,page:0,total:0,mode:'latest',filters:{},datasets:[],leads:[]};
   const CL=S.cl;
@@ -15781,7 +15892,7 @@ function renderCountryLeads(isAdmin){
 
   const co=CL.country||'Australia';
 
-  return `<div class="pg-title" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">${S.clToday?"📅 Today's Leads":(isAdmin?'All Leads':'My Leads')}${S.clToday?'<span style="font-size:12px;font-weight:400;color:var(--text2)">assigned to you · not yet worked</span>':''}
+  return (isAdmin?clTabsHTML():'')+`<div class="pg-title" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">${S.clToday?"📅 Today's Leads":(isAdmin?'All Leads':'My Leads')}${S.clToday?'<span style="font-size:12px;font-weight:400;color:var(--text2)">assigned to you · not yet worked</span>':''}
     <button class="btn btn-sm btn-red" style="display:none" onclick="S.page='addlead';render()">+ Add Lead</button>
     <button class="btn btn-sm btn-outline" onclick="clInit(${isAdmin}).catch(e=>console.error(e))" style="font-size:12px;padding:5px 12px">↻ Refresh</button>
   </div>
@@ -15834,7 +15945,7 @@ async function clInit(isAdmin){
   // Agent pills must count only leads still WAITING to be worked, so the number
   // drops as they dispose. Admin keeps full counts for the whole database.
   const _scope=(q)=>{
-    if(isAdmin) return q;
+    if(isAdmin){ return q.is('agent_id',null).or('disposition.is.null,disposition.eq.""'); }   // admin pills = unassigned fresh leads
     q = q.eq('agent_id', S.user.id);
     q = q.or('disposition.is.null,disposition.eq.""');
     // Respect disabled packets — don't count leads from OFF packets
@@ -15954,7 +16065,11 @@ function clApplyFilters(q, isAdminOverride){
   if(f.grade)  q=q.eq('grade',f.grade);
   if(f.eth)    q=q.eq('ethnicity',f.eth);
   if(f.ds)     q=q.eq('data_set',f.ds);
-  if(isAdm && f.dials){ if(String(f.dials).endsWith('+')) q=q.gte('total_dials',parseInt(f.dials)); else q=q.eq('total_dials',parseInt(f.dials)); }
+  if(isAdm && f.dials){
+    if(f.dials==='custom'){ if(f.dmin!==undefined) q=q.gte('total_dials',f.dmin); if(f.dmax!==undefined) q=q.lte('total_dials',f.dmax); }
+    else if(String(f.dials).endsWith('+')) q=q.gte('total_dials',parseInt(f.dials));
+    else q=q.eq('total_dials',parseInt(f.dials));
+  }
   
   // Agent isolation: agents ONLY see leads assigned to them. The unassigned
   // pool is admin-only (Fresh Leads) and must never be browsable by an agent.
@@ -15976,8 +16091,11 @@ function clApplyFilters(q, isAdminOverride){
     }
   } else {
     // Admin: respect disposition filter
-    if(f.agent) q=q.eq('agent_id',f.agent);
-    if(!f.disp||f.disp==='Fresh') q=q.or('disposition.is.null,disposition.eq.""');
+    const _freshView=(!f.disp||f.disp==='Fresh');
+    if(f.agent==='__none') q=q.is('agent_id',null);
+    else if(f.agent) q=q.eq('agent_id',f.agent);
+    else if(_freshView) q=q.is('agent_id',null);     // Fresh = still in the unassigned pool; assigned leads leave it
+    if(_freshView) q=q.or('disposition.is.null,disposition.eq.""');
     else if(f.disp==='Workable') q=q.in('disposition',['Hot','Call back(within 7 days)','Call Back After Exam','Interested (within 15 days)','Partially Booked','Future Potential (outside 30 days)','Demo Scheduled','Demo Done']);
     else if(f.disp==='CoolingAll') q=q.in('disposition',window.COOLING_DISPS||[]);
     else if(f.disp==='NonWorkableAll') q=q.in('disposition',window.NONWORK_DISPS||[]);
@@ -16016,6 +16134,7 @@ async function clExportCSV(){
   }
   if(btn){ btn.disabled=false; btn.textContent='⬇ Export CSV'; }
 }
+function clAgentLabel(l){ if(l.agent_name) return l.agent_name; if(!l.agent_id) return 'Unassigned'; const u=(S.users||[]).find(x=>x.id===l.agent_id); return u?u.name:l.agent_id; }
 function clAdminExtraHeads(){
   return '<th style="min-width:110px">Dial Count</th><th>Total Dials</th>'+BK_CLIENTS.map(c=>'<th>'+h(c)+'</th>').join('')+'<th>Other Clients</th><th>Total Clients</th>';
 }
@@ -16027,27 +16146,38 @@ function clAdminExtraCells(l){
 }
 // Assign the leads that match the current All Leads filters (incl. the Dial Count filter) to one agent
 async function clAssignFiltered(){
-  const CL=S.cl||{}, agId=document.getElementById('cl-asg-agent')?.value;
+  const CL=S.cl||{}, f=CL.filters||{}, agId=document.getElementById('cl-asg-agent')?.value;
   if(!agId){ showToast('Select an agent first','error'); return; }
   const ag=(S.users||[]).find(u=>u.id===agId);
   const total=CL.total||0; if(!total){ showToast('No leads match the current filters','error'); return; }
   const want=parseInt(document.getElementById('cl-asg-n')?.value)||total, n=Math.min(want,total);
-  if(!confirm('Assign '+n.toLocaleString()+' filtered lead'+(n===1?'':'s')+' to '+(ag?.name||'this agent')+'?')) return;
-  showToast('Assigning '+n.toLocaleString()+' leads…');
+  // Leads from the unassigned pool are only taken if nobody else already holds them.
+  // Re-assigning an agent's existing leads happens only when that agent is picked in the Agent filter.
+  const fromAgent=(f.agent&&f.agent!=='__none')?f.agent:null;
+  if(fromAgent===agId){ showToast('These leads already belong to that agent','error'); return; }
+  if(!confirm('Assign '+n.toLocaleString()+' lead'+(n===1?'':'s')+' to '+(ag?.name||'this agent')+(fromAgent?' (moving them from another agent)':' from the unassigned pool')+'?')) return;
+  const btn=document.querySelector('[onclick="clAssignFiltered()"]'); if(btn){ btn.disabled=true; btn.textContent='Assigning…'; }
   try{
     const ids=[];
     while(ids.length<n){
-      const {data,error}=await clBuildQ('id',true).order('id').range(ids.length,Math.min(ids.length+999,n-1));
+      let q=clBuildQ('id',true); if(!fromAgent) q=q.is('agent_id',null);
+      const {data,error}=await q.order('id').range(ids.length,Math.min(ids.length+999,n-1));
       if(error) throw error; if(!data||!data.length) break; data.forEach(r=>ids.push(r.id));
     }
     const now=new Date().toISOString(); let done=0;
     for(let i=0;i<ids.length;i+=500){
-      const {error}=await sb.from('crm_leads').update({agent_id:agId,agent_name:ag?.name||null,updated_at:now}).in('id',ids.slice(i,i+500));
-      if(error) throw error; done+=Math.min(500,ids.length-i);
+      let u=sb.from('crm_leads').update({agent_id:agId,agent_name:ag?.name||null,updated_at:now}).in('id',ids.slice(i,i+500));
+      u=fromAgent?u.eq('agent_id',fromAgent):u.is('agent_id',null);      // never overwrite a lead someone else just got
+      const {data,error}=await u.select('id');
+      if(error) throw error; done+=(data||[]).length;
     }
-    showToast('✓ '+done.toLocaleString()+' leads assigned to '+(ag?.name||'agent'));
-    if(S.cl) S.cl.counts=null; if(CL.mode==='roundrobin')clRoundRobin(0,true);else clLoadPage(0,true);
-  }catch(e){ showToast('Assign error: '+(e.message||e),'error'); }
+    // everything that shows counts is refreshed from the database
+    if(S.cl){S.cl.counts=null;}
+    try{ await loadAsgnData(); }catch(e){}
+    _invAgents=[];
+    await clInit(true);
+    showToast('✓ '+done.toLocaleString()+' leads assigned to '+(ag?.name||'agent')+(done<ids.length?' ('+(ids.length-done).toLocaleString()+' were taken by someone else meanwhile)':'')+'. Unassigned now: '+(S.cl?.total??0).toLocaleString());
+  }catch(e){ showToast('Assign error: '+(e.message||e),'error'); if(btn){ btn.disabled=false; btn.textContent='Assign'; } }
 }
 async function clCountQ(isAdm){ const{count}=await clApplyFilters(sb.from('crm_leads').select('*',{count:'exact',head:true}),isAdm); return count||0; }
 
@@ -16055,7 +16185,7 @@ async function clLoadPage(page,isAdmin,opts){
   const silent = !!(opts&&opts.silent);
   const CL=S.cl||{}; CL.page=page;
   const cols=isAdmin?22:11;
-  const SEL='id,parent_name,child_name,phone_code,Zone,Country,grade,ethnicity,data_set,dialpad_count,total_dials,disposition,agent_name';
+  const SEL='id,parent_name,child_name,phone_code,Zone,Country,grade,ethnicity,data_set,dialpad_count,total_dials,disposition,agent_name,agent_id';
   const asc=CL.mode==='oldest';
   const tbody=document.getElementById('cl-body');
   if(!silent && tbody) tbody.innerHTML=`<tr><td colspan="${cols}" style="text-align:center;padding:2rem;color:var(--text3)">⏳ Loading ${CL.country}...</td></tr>`;
@@ -16108,7 +16238,7 @@ async function clRoundRobin(page,isAdmin,opts){
   const silent = !!(opts&&opts.silent);
   const CL=S.cl||{}; CL.page=page;
   const cols=isAdmin?22:11;
-  const SEL='id,parent_name,child_name,phone_code,Zone,Country,grade,ethnicity,data_set,dialpad_count,total_dials,disposition,agent_name';
+  const SEL='id,parent_name,child_name,phone_code,Zone,Country,grade,ethnicity,data_set,dialpad_count,total_dials,disposition,agent_name,agent_id';
   const tbody=document.getElementById('cl-body');
   if(!silent && tbody) tbody.innerHTML=`<tr><td colspan="${cols}" style="text-align:center;padding:2rem;color:var(--text3)">⏳ Round Robin...</td></tr>`;
   if(!CL.datasets||!CL.datasets.length){await clLoadPage(page,isAdmin,opts);return;}
@@ -16181,7 +16311,7 @@ function clRenderTable(rows,offset,isAdmin,elapsed){
       <td><span style="background:#EDE9FE;color:#7D3C98;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700">${h(l.data_set)||'—'}</span></td>
       <td style="text-align:center">${l.dialpad_count||0}</td>
       <td><span style="background:${db};color:${dc};padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">${d||'Fresh'}</span></td>
-      ${isAdmin?`<td style="font-size:11px;color:var(--text2)">${h(l.agent_name||'Unassigned')}</td>`+clAdminExtraCells(l):''}
+      ${isAdmin?`<td style="font-size:11px;color:var(--text2)">${h(clAgentLabel(l))}</td>`+clAdminExtraCells(l):''}
     </tr>`;
   }).join('');
   if(isAdmin&&typeof blkBar==='function'){ blkBar(); const a=document.getElementById('blk-all'); if(a) a.checked=false; }
@@ -16201,7 +16331,7 @@ function clUpdatePag(page,rowsOnPage,isAdmin){
   if(prev) prev.disabled=page===0;
   if(next) next.disabled=page>=totalPages-1;
   const f=CL.filters||{};
-  const dispLabel=!f.disp||f.disp==='Fresh'?'Fresh':f.disp==='all'?'All':f.disp;
+  const dispLabel=!f.disp||f.disp==='Fresh'?((isAdmin&&!f.agent)?'Unassigned Fresh':'Fresh'):f.disp==='all'?'All':f.disp;
   const rt=document.getElementById('cl-result-title');
   if(rt) rt.textContent=`${CL.country} — ${CL.total.toLocaleString()} ${dispLabel} leads`;
 }
@@ -16249,6 +16379,11 @@ function clApplyFilter(){
   S._noFreshLeadsDs=null; // clear any leftover popup flag from a previous empty search
   const flds={parent:'cl-p',child:'cl-ch',phone:'cl-ph',zone:'cl-zone',grade:'cl-grade',eth:'cl-eth',ds:'cl-ds',disp:'cl-disp',agent:'cl-agent',dials:'cl-dials'};
   Object.entries(flds).forEach(([k,id])=>{const el=document.getElementById(id);if(el?.value)CL.filters[k]=el.value;});
+  if(CL.filters.phone){ const d=CL.filters.phone.replace(/\D/g,''); if(d) CL.filters.phone=d; }   // "+44 7796-064407" → digits, matches how numbers are stored
+  if(CL.filters.dials==='custom'){
+    const mn=parseInt(document.getElementById('cl-dmin')?.value), mx=parseInt(document.getElementById('cl-dmax')?.value);
+    if(!isNaN(mn)) CL.filters.dmin=mn; if(!isNaN(mx)) CL.filters.dmax=mx;
+  }
   if(CL.mode==='roundrobin')clRoundRobin(0,isSA());else clLoadPage(0,isSA());
 }
 
@@ -16256,6 +16391,7 @@ function clClear(){
   const CL=S.cl||{}; CL.filters={}; CL.page=0;
   ['cl-p','cl-ch','cl-ph'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
   ['cl-zone','cl-grade','cl-eth','cl-ds','cl-disp','cl-agent','cl-dials'].forEach(id=>{const el=document.getElementById(id);if(el)el.selectedIndex=0;});
+  ['cl-dmin','cl-dmax'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';}); const _dr=document.getElementById('cl-dials-range'); if(_dr)_dr.style.display='none';
   if(CL.mode==='roundrobin')clRoundRobin(0,isSA());else clLoadPage(0,isSA());
 }
 
