@@ -554,7 +554,7 @@ tr:last-child td{border-bottom:none;}tr:hover td{background:#fafafa;cursor:point
 // login screen and logged to the console, so a quick hard refresh + glance
 // tells him definitively whether Netlify is actually serving THIS file yet,
 // instead of guessing at whether a reported bug was ever really fixed.
-const BUILD_STAMP='2026-11-17-assign-unassign';
+const BUILD_STAMP='2026-11-17-unassign-filters-shot';
 console.log('[EdvantEdge CRM] build', BUILD_STAMP);
 const SB_URL='https://qyubbieikviesfcorusq.supabase.co';
 const SB_KEY=['eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF5','dWJiaWVpa3ZpZXNmY29ydXNxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU0OTkzNjEsImV4cCI6MjA5MTA3NTM2MX0.t_4mZWd_Qo1KHrGN9imMnnpn6UkLtLFrOeI2Q9lPD08'].join('');
@@ -3327,6 +3327,7 @@ async function impRunCheck(){
     if(!raw.length) throw new Error('No data rows were found in that file.');
     let map=impMapHeaders(raw[0]), startAt=1;
     if(!map){ map={}; IMP_FIELDS.forEach((f,i)=>{map[f]=i;}); startAt=0; }   // no header → fixed column order
+    else { const have=new Set(raw[0].map(_impKey)); const miss=IMP_TEMPLATE_HEADERS.filter(x=>!have.has(_impKey(x))&&!(map[({phone:'mobile',zone:'timezone',agent_id:'agent'})[_impKey(x)]||_impKey(x).replace(/ /g,'_')]!==undefined)); if(miss.length) showToast('Template columns not found in this file (left blank): '+miss.join(', ')); }
     const rows=[]; let rowNo=0;
     for(let i=startAt;i<raw.length;i++){
       const r=raw[i]; if(!r||r.every(v=>String(v||'').trim()==='')) continue;
@@ -3509,7 +3510,7 @@ function renderImport(){
       <div class="card">
         <h3 style="margin:0 0 6px">What gets imported</h3>
         <p style="margin:0 0 10px;color:var(--text2);font-size:13px">These columns are read from your file:</p>
-        <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px">${['Country','Parent Name','Child Name','Grade','Mobile','Phone Code','Alt Phone','Email','City','Time Zone','Ethnicity','Dispositions','Data Set','Agent','Priority','Relation','Comments','Notes','Client Booked','Demo Platform','Cooling Since','Added At'].map(x=>`<span style="background:#eef3fb;color:#2c4a7c;border-radius:9px;padding:2px 10px;font-size:12px;font-weight:600">${x}</span>`).join('')}</div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px">${IMP_TEMPLATE_HEADERS.map(x=>`<span style="background:#eef3fb;color:#2c4a7c;border-radius:9px;padding:2px 10px;font-size:12px;font-weight:600">${x}</span>`).join('')}</div>
         <p style="margin:0 0 10px;color:var(--text2);font-size:12px">Also read when present: <b>Data Set</b>, <b>Alt Phone</b>, <b>Agent</b>.</p>
         <table style="width:100%;font-size:13px;border-collapse:collapse">
           <tr style="text-align:left;color:var(--text2)"><th style="padding:4px 0">If this is…</th><th>We add</th></tr>
@@ -3572,13 +3573,14 @@ function renderImport(){
   </div>`;
 }
 
+// The ONE list of template columns — used for the sample download, the chips on the page and the import check
+const IMP_TEMPLATE_HEADERS=['phone','parent_name','child_name','phone_code','alt_phone','grade','email','city','data_set','Zone','Country','ethnicity','disposition','agent_id'];
 function downloadImportSample(){
-  // 22 columns — every one is understood by the importer (only Mobile is required; the rest are optional)
-  const headers=['Country','Parent Name','Child Name','Grade','Mobile','Phone Code','Alt Phone','Email','City','Time Zone','Ethnicity','Dispositions','Data Set','Agent','Priority','Relation','Comments','Notes','Client Booked','Demo Platform','Cooling Since','Added At'];
+  const headers=IMP_TEMPLATE_HEADERS;
   const examples=[
-    ['United Kingdom','Sarah Johnson','Emily Johnson','Grade 5','447700900001','44','','sarah@email.com','London','GMT','South Asian','','UK_FB_JUN26','','','Mother','','','','','',''],
-    ['USA','Michael Smith','Jake Smith','Grade 3','12025551234','1','','michael@email.com','New York','EST','South Asian','','US_FB_JUN26','','','Father','','','','','',''],
-    ['Australia','Priya Patel','Arya Patel','Grade 4','61412345678','61','','priya@email.com','Sydney','AEST','South Asian','','AUS_FB_JUN26','','','Mother','','','','','',''],
+    ['447700900001','Sarah Johnson','Emily Johnson','447700900001','','Grade 5','sarah@email.com','London','UK_FB_JUN26','GMT','United Kingdom','South Asian','',''],
+    ['12025551234','Michael Smith','Jake Smith','12025551234','','Grade 3','michael@email.com','New York','US_FB_JUN26','EST','USA','South Asian','',''],
+    ['61412345678','Priya Patel','Arya Patel','61412345678','','Grade 4','priya@email.com','Sydney','AUS_FB_JUN26','AEST','Australia','South Asian','',''],
   ];
   const csv=[headers,...examples].map(r=>r.map(v=>`"${v}"`).join(',')).join('\n');
   const a=document.createElement('a');
@@ -6257,6 +6259,84 @@ const BK_FORM_LINKS={
   'Vedantu':'https://www.vedantu.com/form/6a7f06d34974af653e779bbf'
 };
 let _bkBookings=[];
+let _bkShotIds=new Set();
+let _bkShot={blob:null,name:'',origBytes:0,preview:'',existing:null,existingUrl:'',busy:'',err:''};
+function bkShotReset(){ try{ if(_bkShot.preview) URL.revokeObjectURL(_bkShot.preview); }catch(e){} _bkShot={blob:null,name:'',origBytes:0,preview:'',existing:null,existingUrl:'',busy:'',err:''}; }
+const bkKB=n=>n>=1048576?(n/1048576).toFixed(1)+' MB':Math.max(1,Math.round(n/1024))+' KB';
+function bkShotHTML(){
+  const s=_bkShot, ex=s.existing;
+  let body='';
+  if(s.busy) body='<div style="color:#8a9ab0;font-size:12px">⏳ '+h(s.busy)+'</div>';
+  else if(s.blob) body='<div style="display:flex;gap:10px;align-items:center"><img src="'+s.preview+'" style="max-width:110px;max-height:90px;border-radius:6px;border:1px solid #e2e6ed"><div style="font-size:12px"><b>New screenshot ready</b><br>'+h(s.name)+'<br>'+bkKB(s.blob.size)+' <span style="color:#8a9ab0">(original '+bkKB(s.origBytes)+', compressed)</span><br><button type="button" onclick="bkShotClear()" style="margin-top:4px;padding:2px 8px;border:1px solid #e74c3c;background:#fdecea;color:#c0392b;border-radius:4px;font-size:11px;cursor:pointer">✕ Remove</button></div></div>'
+    +(ex?'<div style="font-size:11px;color:#b45309;margin-top:6px">This will replace the screenshot saved earlier when you press Save.</div>':'');
+  else if(ex) body='<div style="display:flex;gap:10px;align-items:center">'+(s.existingUrl?'<a href="'+s.existingUrl+'" target="_blank"><img src="'+s.existingUrl+'" style="max-width:110px;max-height:90px;border-radius:6px;border:1px solid #e2e6ed"></a>':'')
+    +'<div style="font-size:12px"><b style="color:#1e8449">✅ Screenshot saved</b><br>'+h(ex.uploaded_by_name||'')+' · '+(ex.uploaded_at?new Date(ex.uploaded_at).toLocaleString('en-GB',{timeZone:'Asia/Kolkata',day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit',hour12:true})+' IST':'')+' · '+bkKB(ex.size_bytes||0)+'<br>'
+    +'<a href="#" onclick="bkShotOpen(\''+h(S._bkEditId||'')+'\');return false" style="color:#2471a3">View</a> · <a href="#" onclick="bkShotOpen(\''+h(S._bkEditId||'')+'\',true);return false" style="color:#2471a3">Download</a></div></div>';
+  else body='<div style="color:#888;font-size:12px">No screenshot yet. Optional — you can save the booking now and add it later by pressing Edit once the client joins.</div>';
+  return body+(s.err?'<div style="color:#e74c3c;font-size:12px;margin-top:6px">⚠️ '+h(s.err)+'</div>':'');
+}
+function bkShotDraw(){ const el=document.getElementById('bksf_shot_box'); if(el) el.innerHTML=bkShotHTML(); const b=document.getElementById('bksf_shot_btn'); if(b) b.textContent=(_bkShot.blob||_bkShot.existing)?'🔄 Choose a different screenshot':'📷 Choose screenshot'; }
+function bkShotClear(){ try{ if(_bkShot.preview) URL.revokeObjectURL(_bkShot.preview); }catch(e){} _bkShot.blob=null;_bkShot.preview='';_bkShot.name='';_bkShot.err=''; const f=document.getElementById('bksf_shot_file'); if(f) f.value=''; bkShotDraw(); }
+// shrink the picture before it is stored: longest side 1600px, JPEG, aim for under ~500 KB, still readable
+async function bkShotCompress(file){
+  const url=URL.createObjectURL(file);
+  try{
+    const img=await new Promise((res,rej)=>{ const i=new Image(); i.onload=()=>res(i); i.onerror=()=>rej(new Error('This image could not be read')); i.src=url; });
+    let max=1600, q=0.8, blob=null;
+    for(let k=0;k<5;k++){
+      const sc=Math.min(1,max/Math.max(img.naturalWidth,img.naturalHeight)), w=Math.max(1,Math.round(img.naturalWidth*sc)), hh=Math.max(1,Math.round(img.naturalHeight*sc));
+      const c=document.createElement('canvas'); c.width=w; c.height=hh; const x=c.getContext('2d'); x.fillStyle='#fff'; x.fillRect(0,0,w,hh); x.drawImage(img,0,0,w,hh);
+      blob=await new Promise(r=>c.toBlob(r,'image/jpeg',q));
+      if(blob&&blob.size<=500*1024) break;
+      max=Math.round(max*0.8); q=Math.max(0.55,q-0.07);
+    }
+    if(!blob) throw new Error('Could not compress this image');
+    if(file.type==='image/jpeg'&&file.size<=blob.size) return file;     // already small — keep as is
+    return blob;
+  } finally { URL.revokeObjectURL(url); }
+}
+async function bkShotPick(el){
+  const file=el.files&&el.files[0]; if(!file) return;
+  const ok=/^image\/(jpeg|png)$/.test(file.type)&&/\.(jpe?g|png)$/i.test(file.name||'x.jpg');
+  if(!ok){ _bkShot.err='Only JPG, JPEG or PNG screenshots are allowed'; el.value=''; bkShotDraw(); return; }
+  if(file.size>15*1024*1024){ _bkShot.err='Image is too large (max 15 MB before compression)'; el.value=''; bkShotDraw(); return; }
+  _bkShot.err=''; _bkShot.busy='Compressing…'; bkShotDraw();
+  try{
+    const blob=await bkShotCompress(file);
+    try{ if(_bkShot.preview) URL.revokeObjectURL(_bkShot.preview); }catch(e){}
+    _bkShot.blob=blob; _bkShot.name=file.name; _bkShot.origBytes=file.size; _bkShot.preview=URL.createObjectURL(blob);
+  }catch(e){ _bkShot.err=e.message||'Could not process this image'; }
+  _bkShot.busy=''; el.value=''; bkShotDraw();
+}
+async function bkShotLoadExisting(bid){
+  try{
+    const {data}=await sb.from('booking_attachments').select('*').eq('booking_id',bid).maybeSingle();
+    if(S._bkEditId!==bid) return;
+    _bkShot.existing=data||null;
+    if(data){ const {data:u}=await sb.storage.from('demo-screenshots').createSignedUrl(data.path,3600); _bkShot.existingUrl=u?.signedUrl||''; }
+  }catch(e){ console.warn('screenshot lookup failed:',e); }
+  bkShotDraw();
+}
+// upload only when a NEW picture was chosen; the previous file is removed after the new one is saved
+async function bkShotSave(bid){
+  const s=_bkShot; if(!s.blob||!bid) return;
+  const ext=s.blob.type==='image/png'?'png':'jpg', path=bid+'/'+Date.now()+'.'+ext, old=s.existing&&s.existing.path;
+  const {error}=await sb.storage.from('demo-screenshots').upload(path,s.blob,{contentType:s.blob.type||'image/jpeg',upsert:false,cacheControl:'3600'});
+  if(error) throw error;
+  const {error:e2}=await sb.from('booking_attachments').upsert({booking_id:bid,path,file_name:s.name,content_type:s.blob.type||'image/jpeg',size_bytes:s.blob.size,orig_bytes:s.origBytes,uploaded_by:S.user.id,uploaded_by_name:S.user.name||S.user.username||'',uploaded_at:new Date().toISOString()},{onConflict:'booking_id'});
+  if(e2){ try{ await sb.storage.from('demo-screenshots').remove([path]); }catch(x){} throw e2; }
+  if(old&&old!==path){ try{ await sb.storage.from('demo-screenshots').remove([old]); }catch(x){} }
+  _bkShotIds.add(bid);
+}
+async function bkShotOpen(bid,dl){
+  try{
+    const {data:row,error}=await sb.from('booking_attachments').select('path,file_name').eq('booking_id',bid).maybeSingle();
+    if(error||!row){ showToast('No screenshot saved for this booking','error'); return; }
+    const {data,error:e2}=await sb.storage.from('demo-screenshots').createSignedUrl(row.path,3600,dl?{download:'demo-joining-'+bid.slice(0,8)+(row.path.endsWith('.png')?'.png':'.jpg')}:undefined);
+    if(e2||!data?.signedUrl) throw (e2||new Error('no link'));
+    window.open(data.signedUrl,'_blank');
+  }catch(e){ showToast('Could not open the screenshot: '+(e.message||e),'error'); }
+}
 let _bkLoaded=false;
 let _bkFilter={client:'',status:'',agent:'',country:''};
 let _bkSelClient='';
@@ -6283,6 +6363,7 @@ async function bkLoad(){
       if((data||[]).length<1000)done=true;else page++;
     }
     _bkBookings=all;
+    try{ const ids=new Set(); for(let p=0;p<20;p++){ const {data}=await sb.from('booking_attachments').select('booking_id').range(p*1000,p*1000+999); (data||[]).forEach(r=>ids.add(r.booking_id)); if(!data||data.length<1000) break; } _bkShotIds=ids; }catch(e){}
   }catch(e){console.error('bkLoad:',e);_bkBookings=[];}
   // Don't re-render if the booking form is open — would wipe whatever
   // the agent is currently typing (background 2-min refresh was clearing the form)
@@ -6296,7 +6377,7 @@ function bkStandaloneOpen(lead){
   // confirmation, so wipe any confirmations left over from a previous booking.
   _bkFormConfirmed=new Set();
   S._bkActiveLead=lead||null;
-  S._bkEditId=null;S._bkEditData=null;
+  S._bkEditId=null;S._bkEditData=null; bkShotReset();
   S.modal={type:'bkStandalone'};
   render();
 }
@@ -6322,15 +6403,15 @@ async function bkStandaloneEdit(id){
     if(qrByPhone) qr=qrByPhone;
   }
   const bkWithExtras={...bk,additional_call_ids:(qr?.additional_call_ids||[])};
-  S._bkActiveLead=null;S._bkEditId=id;S._bkEditData=bkWithExtras;
+  S._bkActiveLead=null;S._bkEditId=id;S._bkEditData=bkWithExtras; bkShotReset();
   S.modal={type:'bkStandalone'};
-  render();
+  render(); bkShotLoadExisting(id);
   if(_bkSelClient)setTimeout(()=>bkClientPick(_bkSelClient),100);
 }
 
 function bkStandaloneClose(){
 
-  S.modal=null;S._bkActiveLead=null;S._bkEditId=null;S._bkEditData=null;
+  S.modal=null;S._bkActiveLead=null;S._bkEditId=null;S._bkEditData=null; bkShotReset();
   S._bkFormPopupClient=null;
   render();
 }
@@ -6512,6 +6593,12 @@ function renderBkStandaloneModal(){
       +'<div style="display:flex;gap:6px;margin-top:4px"><input id="bksf_extra_callid" type="text" inputmode="numeric" maxlength="16" placeholder="Paste extra Call ID..." oninput="this.value=this.value.replace(/\\D/g,\'\').slice(0,16)" style="flex:1;padding:7px 10px;border:1.5px solid #c8e0f7;border-radius:6px;font-size:12px;font-family:monospace">'
       +'<button type="button" onclick="bkAddExtraCallId()" style="padding:7px 12px;background:#2471a3;color:#fff;border:none;border-radius:6px;font-size:12px;font-weight:700;cursor:pointer">➕ Add</button></div>'
       +'</div>'
+    +'<div style="margin-bottom:16px;background:#f3faf4;border:1px solid #cfe8d0;border-radius:8px;padding:12px">'
+      +'<label style="font-size:10px;font-weight:700;color:#1e8449;text-transform:uppercase;display:block;margin-bottom:8px">🖼️ Demo Joining Screenshot / Attachment <span style="font-weight:400;text-transform:none;color:#5b8a62">(optional · JPG, JPEG, PNG)</span></label>'
+      +'<div id="bksf_shot_box">'+bkShotHTML()+'</div>'
+      +'<input id="bksf_shot_file" type="file" accept="image/jpeg,image/png,.jpg,.jpeg,.png" style="display:none" onchange="bkShotPick(this)">'
+      +'<button type="button" id="bksf_shot_btn" onclick="document.getElementById(\'bksf_shot_file\').click()" style="margin-top:8px;padding:7px 12px;background:#1e8449;color:#fff;border:none;border-radius:6px;font-size:12px;font-weight:700;cursor:pointer">'+((_bkShot.blob||_bkShot.existing)?'🔄 Choose a different screenshot':'📷 Choose screenshot')+'</button>'
+      +'</div>'
 
     +'<div id="bksf_err" style="color:#e74c3c;font-size:12px;margin-bottom:10px;display:none"></div>'
     +'</div>'
@@ -6687,6 +6774,7 @@ async function bkStandaloneSave(){
     dialpad_call_id:     callidVal,
     updated_at:          new Date().toISOString(),
   };
+  let _savedBid=S._bkEditId||null;
   try{
     if(S._bkEditId){
       // On edit: include phone_code only if it changed (avoids unique constraint on same record)
@@ -6707,6 +6795,7 @@ async function bkStandaloneSave(){
       // Use .select('id').single() to get the UUID back directly — no secondary lookup needed
       const{data:insertedBk,error}=await sb.from('DEMO-BOOKING').insert(rec).select('id').single();
       if(error)throw error;
+      _savedBid=insertedBk?.id||null;
       showToast('Booking saved — '+_bkSelClient+' · '+pn);
       pushToTuritoIfNeeded(rec, pc);
       // Update lead disposition in crm_leads (non-fatal — booking already saved)
@@ -6744,6 +6833,11 @@ async function bkStandaloneSave(){
         console.error('[Quality] triggerQualityCheck exception:',qe);
         showToast('⚠️ Quality trigger error: '+(qe.message||String(qe)),'error');
       }
+    }
+    // Screenshot is optional: the booking is already saved, so a failed upload never undoes it
+    if(_bkShot.blob){
+      try{ await bkShotSave(_savedBid); showToast('Screenshot saved'); }
+      catch(se){ console.error('screenshot upload failed:',se); showToast('Booking saved, but the screenshot could not be uploaded ('+(se.message||se)+'). Open the booking, press Edit and try again.','error'); }
     }
     _bkLoaded=false;
     bkStandaloneClose();
@@ -6877,6 +6971,7 @@ function renderStandaloneBookings(){
         +'<td style="padding:10px 12px;font-weight:700;color:#e74c3c">'+ddD+(dt?'<div style="font-size:10px;color:#8a9ab0">'+dt+'</div>':'')+'</td>'
         +'<td style="padding:10px 12px;white-space:nowrap" onclick="event.stopPropagation()">'
         +'<button onclick="bkStandaloneEdit(\''+b.id+'\')" style="padding:4px 10px;background:#fff;border:1px solid #2471a3;color:#2471a3;border-radius:4px;font-size:10px;cursor:pointer;margin-right:4px">✏️ Edit</button>'
+        +(_bkShotIds.has(b.id)?'<button onclick="bkShotOpen(\''+b.id+'\')" title="View demo joining screenshot" style="padding:4px 8px;background:#fff;border:1px solid #1e8449;color:#1e8449;border-radius:4px;font-size:10px;cursor:pointer;margin-right:4px">📷</button>':'')
         +'<button onclick="bkWhatsAppFormat(\''+b.id+'\')" style="padding:4px 10px;background:#25D366;border:none;color:#fff;border-radius:4px;font-size:10px;cursor:pointer;margin-right:4px;font-weight:700">💬 WA</button>'
         +(sa?'<button onclick="bkStandaloneDelete(\''+b.id+'\',\''+sn+'\')" style="padding:4px 10px;background:#fdecea;border:1px solid rgba(192,57,43,.3);color:#C0392B;border-radius:4px;font-size:10px;cursor:pointer">🗑 Del</button>':'')
         +'</td></tr>';
@@ -7253,6 +7348,7 @@ function renderAgentBookingsView(){
       +'<td data-label="Demo Date">'+ddDisp+'</td>'
       +'<td data-label="Actions" onclick="event.stopPropagation()" style="white-space:nowrap;position:sticky;right:0;background:#fff;box-shadow:-4px 0 6px -2px rgba(0,0,0,.15)">'
       +'<button style="padding:4px 8px;background:#fff;border:1px solid #e2e6ed;border-radius:4px;font-size:10px;cursor:pointer;margin-right:3px" onclick="bkStandaloneEdit(\''+b.id+'\')">✏️ Edit</button>'
+      +(_bkShotIds.has(b.id)?'<button title="View demo joining screenshot" style="padding:4px 8px;background:#fff;border:1px solid #1e8449;color:#1e8449;border-radius:4px;font-size:10px;cursor:pointer;margin-right:3px" onclick="bkShotOpen(\''+b.id+'\')">📷</button>':'')
       +'<button onclick="bkWhatsAppFormat(\''+b.id+'\')" style="padding:4px 8px;background:#25D366;border:none;color:#fff;border-radius:4px;font-size:10px;cursor:pointer;margin-right:3px;font-weight:700">💬 WA</button>'
       +(sa?'<button style="padding:4px 8px;background:#fdecea;border:1px solid rgba(192,57,43,.3);color:#C0392B;border-radius:4px;font-size:10px;cursor:pointer" onclick="bkStandaloneDelete(\''+b.id+'\',\''+h(b.parent_name||'')+'\')">🗑</button>':'')
       +'</td>'
@@ -16291,53 +16387,75 @@ async function clAssignFiltered(){
   else showToast('⚠ Only '+done.toLocaleString()+' of '+n.toLocaleString()+' leads were assigned to '+(ag?.name||'agent')+' — '+fail+'. Nothing else was changed.','error');
 }
 
-// ── Unassign: take unused leads back from an agent into the Fresh pool ──
-let _un={agent:'',name:'',pv:null,busy:false};
+// ── Unassign: take leads back from an agent into the Fresh pool — by agent, country, disposition and dataset ──
+let _un={agent:'',rows:null,busy:false,f:{co:'',d:'',ds:''},inc:false,n:'',err:''};
 async function unOpen(agentId){
   if(!agentId){ showToast('Select an agent first','error'); return; }
-  const ag=(S.users||[]).find(u=>u.id===agentId);
-  _un={agent:agentId,name:ag?.name||agentId,pv:null,busy:false};
+  _un={agent:agentId,rows:null,busy:false,f:{co:'',d:'',ds:''},inc:false,n:'',err:''};
   let ov=document.getElementById('un-ov'); if(ov) ov.remove();
   ov=document.createElement('div'); ov.id='un-ov';
   ov.style.cssText='position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px';
-  document.body.appendChild(ov); unDraw();
-  try{
-    const {data,error}=await sb.rpc('unassign_preview',{p_agent:agentId}); if(error) throw error; _un.pv=data;
-  }catch(e){ _un.err=e.message||String(e); }
+  document.body.appendChild(ov); await unLoad(agentId);
+}
+async function unLoad(agentId){
+  _un.agent=agentId; _un.rows=null; _un.err=''; _un.f={co:'',d:'',ds:''}; _un.n=''; unDraw();
+  try{ const {data,error}=await sb.rpc('unassign_facets',{p_agent:agentId}); if(error) throw error; _un.rows=data||[]; }
+  catch(e){ _un.err=e.message||String(e); }
   unDraw();
 }
 function unClose(){ if(_un.busy) return; document.getElementById('un-ov')?.remove(); }
+const unDispLabel=d=>d==='__fresh'?'Fresh (not contacted)':d;
+// a row is usable when it is unworked, or when the Admin ticked "include worked"; a chosen status other than Fresh is worked by nature
+function unMatch(r,skip){ const f=_un.f; return (_un.inc||!r.w)&&(skip==='co'||!f.co||r.co===f.co)&&(skip==='d'||!f.d||r.d===f.d)&&(skip==='ds'||!f.ds||r.ds===f.ds); }
+function unOpts(key,skip){ const m={}; (_un.rows||[]).forEach(r=>{ if(unMatch(r,skip)) m[r[key]]=(m[r[key]]||0)+Number(r.n); }); return Object.entries(m).sort((a,b)=>String(a[0]).localeCompare(String(b[0]))); }
+function unAvail(){ return (_un.rows||[]).reduce((t,r)=>unMatch(r)?t+Number(r.n):t,0); }
+function unChange(k,v){
+  if(k==='agent'){ unLoad(v); return; }
+  if(k==='inc') _un.inc=!!v; else { _un.f[k]=v; if(k==='d'&&v&&v!=='__fresh') _un.inc=true; _un.n=''; }
+  unDraw();
+}
 function unDraw(){
   const ov=document.getElementById('un-ov'); if(!ov) return;
-  const pv=_un.pv, inc=document.getElementById('un-inc')?.checked||false, keepN=document.getElementById('un-n')?.value;
-  const max=pv?(inc?Number(pv.assigned):Number(pv.unworked)):0;
-  const rows=pv?(pv.by_disp||[]).map(r=>`<tr><td style="padding:4px 8px">${h(r.d)}</td><td style="padding:4px 8px;text-align:right;font-weight:700">${Number(r.n).toLocaleString()}</td></tr>`).join(''):'';
-  ov.innerHTML=`<div style="background:#fff;border-radius:12px;max-width:460px;width:100%;max-height:90vh;overflow:auto;padding:20px">
-    <div style="font-size:16px;font-weight:800;margin-bottom:4px">↩ Unassign leads — ${h(_un.name)}</div>
-    <div style="font-size:12px;color:var(--text2);margin-bottom:12px">Unused leads go back to the Fresh pool and leave this agent's inventory. Lead history is kept.</div>
-    ${!pv?(_un.err?`<div style="color:#b91c1c">Could not load: ${h(_un.err)}</div>`:'<div style="padding:20px;text-align:center;color:var(--text2)">⏳ Loading…</div>'):`
+  const sel='width:100%;padding:7px 8px;border:1.5px solid var(--border);border-radius:var(--r);font-size:12px;outline:none';
+  const rows=_un.rows, avail=rows?unAvail():0, f=_un.f;
+  const nVal=_un.n!==''?Math.min(Number(_un.n)||0,avail):avail;
+  const agents=(S.users||[]).filter(u=>u.role==='agent'&&u.active!==false);
+  const opt=(arr,cur,lbl)=>arr.map(([v,c])=>`<option value="${h(v)}" ${cur===v?'selected':''}>${h(lbl?lbl(v):v)} (${Number(c).toLocaleString()})</option>`).join('');
+  const total=rows?rows.reduce((t,r)=>t+Number(r.n),0):0;
+  ov.innerHTML=`<div style="background:#fff;border-radius:12px;max-width:480px;width:100%;max-height:92vh;overflow:auto;padding:20px">
+    <div style="font-size:16px;font-weight:800;margin-bottom:4px">↩ Unassign leads</div>
+    <div style="font-size:12px;color:var(--text2);margin-bottom:12px">Pick exactly which leads to take back. They go to the Fresh pool and keep their dataset name and history.</div>
+    <label style="font-size:11px;font-weight:700">Agent</label>
+    <select style="${sel};margin-bottom:8px" onchange="unChange('agent',this.value)">${agents.map(a=>`<option value="${h(a.id)}" ${a.id===_un.agent?'selected':''}>${h(a.name)}</option>`).join('')}</select>
+    ${!rows?(_un.err?`<div style="color:#b91c1c">Could not load: ${h(_un.err)}</div>`:'<div style="padding:20px;text-align:center;color:var(--text2)">⏳ Loading…</div>'):`
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+      <div><label style="font-size:11px;font-weight:700">Country</label><select style="${sel}" onchange="unChange('co',this.value)"><option value="">All countries</option>${opt(unOpts('co','co'),f.co)}</select></div>
+      <div><label style="font-size:11px;font-weight:700">Disposition</label><select style="${sel}" onchange="unChange('d',this.value)"><option value="">All dispositions</option>${opt(unOpts('d','d'),f.d,unDispLabel)}</select></div>
+    </div>
+    <label style="font-size:11px;font-weight:700">Dataset</label>
+    <select style="${sel};margin-bottom:8px" onchange="unChange('ds',this.value)"><option value="">All datasets</option>${opt(unOpts('ds','ds'),f.ds)}</select>
+    <label style="font-size:12px;display:flex;gap:6px;align-items:center;margin-bottom:10px"><input type="checkbox" ${_un.inc?'checked':''} onchange="unChange('inc',this.checked)"> Also include leads already worked (dialled / disposed)</label>
     <div style="display:flex;gap:10px;margin-bottom:10px">
-      <div class="card" style="flex:1;padding:8px 12px"><div style="font-size:11px;color:var(--text2)">Assigned</div><div style="font-size:20px;font-weight:800">${Number(pv.assigned).toLocaleString()}</div></div>
-      <div class="card" style="flex:1;padding:8px 12px"><div style="font-size:11px;color:var(--text2)">Unused (can return)</div><div style="font-size:20px;font-weight:800;color:#16a34a">${Number(pv.unworked).toLocaleString()}</div></div></div>
-    <table style="width:100%;font-size:12px;margin-bottom:10px"><thead><tr style="background:#f8fafd"><th style="text-align:left;padding:4px 8px">Current status</th><th style="text-align:right;padding:4px 8px">Leads</th></tr></thead><tbody>${rows}</tbody></table>
-    <label style="font-size:12px;display:flex;gap:6px;align-items:center;margin-bottom:8px"><input id="un-inc" type="checkbox" ${inc?'checked':''} onchange="unDraw()"> Also take back leads already worked (dialled / disposed)</label>
-    <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px"><span style="font-size:12px;font-weight:700">How many?</span>
-      <input id="un-n" type="number" min="1" max="${max}" value="${keepN!=null&&keepN!==''?h(keepN):max}" style="width:110px;padding:7px;border:1.5px solid var(--border);border-radius:var(--r);font-size:13px"> <span style="font-size:12px;color:var(--text2)">of ${max.toLocaleString()} eligible</span></div>
+      <div class="card" style="flex:1;padding:8px 12px"><div style="font-size:11px;color:var(--text2)">Available with these filters</div><div style="font-size:22px;font-weight:800;color:${avail?'#16a34a':'#b91c1c'}">${avail.toLocaleString()}</div></div>
+      <div class="card" style="flex:1;padding:8px 12px"><div style="font-size:11px;color:var(--text2)">All leads of this agent</div><div style="font-size:22px;font-weight:800">${total.toLocaleString()}</div></div></div>
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px"><span style="font-size:12px;font-weight:700">Leads to unassign</span>
+      <input id="un-n" type="number" min="1" max="${avail}" value="${avail?nVal:''}" oninput="_un.n=this.value" style="width:110px;padding:7px;border:1.5px solid var(--border);border-radius:var(--r);font-size:13px"></div>
     <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn btn-outline btn-sm" onclick="unClose()">Cancel</button>
-      <button class="btn btn-red btn-sm" id="un-go" onclick="unRun()" ${max?'':'disabled'}>Unassign</button></div>`}
+      <button class="btn btn-red btn-sm" id="un-go" onclick="unRun()" ${avail?'':'disabled'}>Unassign</button></div>`}
   </div>`;
 }
 async function unRun(){
-  if(_un.busy||!_un.pv) return;
-  const inc=document.getElementById('un-inc')?.checked||false, max=inc?Number(_un.pv.assigned):Number(_un.pv.unworked);
-  const n=parseInt(document.getElementById('un-n')?.value,10);
-  if(!(n>=1)||n>max){ showToast('Enter a number between 1 and '+max.toLocaleString(),'error'); return; }
-  if(!confirm('Take back '+n.toLocaleString()+' '+(inc?'':'unused ')+'lead'+(n===1?'':'s')+' from '+_un.name+' and return them to the Fresh pool?')) return;
+  if(_un.busy||!_un.rows) return;
+  const avail=unAvail(), n=parseInt(document.getElementById('un-n')?.value,10), f=_un.f;
+  if(!(n>=1)||n>avail){ showToast('Enter a number between 1 and '+avail.toLocaleString(),'error'); return; }
+  const ag=(S.users||[]).find(u=>u.id===_un.agent), nm=ag?.name||_un.agent;
+  const crit=[f.co||'all countries',f.d?unDispLabel(f.d):'all dispositions',f.ds||'all datasets'].join(' · ');
+  if(!confirm('Take back '+n.toLocaleString()+' lead'+(n===1?'':'s')+' from '+nm+'?\n('+crit+')\nThey will return to the Fresh pool.')) return;
   _un.busy=true; const go=document.getElementById('un-go'); if(go){ go.disabled=true; go.textContent='Working…'; }
   let done=0, fail='';
   try{
     while(done<n){
-      const {data,error}=await sb.rpc('unassign_leads',{p_agent:_un.agent,p_n:Math.min(3000,n-done),p_include_worked:inc,p_dataset:null});
+      const {data,error}=await sb.rpc('unassign_leads',{p_agent:_un.agent,p_n:Math.min(3000,n-done),p_include_worked:_un.inc,p_dataset:f.ds||null,p_country:f.co||null,p_disp:f.d||null});
       if(error) throw error; if(!data) break; done+=data;
       if(go) go.textContent='Returned '+done.toLocaleString()+' / '+n.toLocaleString()+'…';
       await new Promise(r=>setTimeout(r,0));
@@ -16345,8 +16463,8 @@ async function unRun(){
   }catch(e){ fail=e.message||String(e); }
   _un.busy=false; document.getElementById('un-ov')?.remove();
   try{ if(S.cl) S.cl.counts=null; try{ await loadAsgnData(); }catch(e){} _invAgents=[]; if(S.page==='leads'&&S.leadsTab==='inv') await invLoadAgents(); else if(S.page==='leads') await clInit(true); }catch(e){ console.error('refresh after unassign:',e); }
-  if(done===n) showToast('✓ '+done.toLocaleString()+' lead'+(done===1?'':'s')+' returned to the Fresh pool from '+_un.name);
-  else showToast('⚠ Only '+done.toLocaleString()+' of '+n.toLocaleString()+' leads were returned'+(fail?' — '+fail:' — no more eligible leads')+'.','error');
+  if(done===n) showToast('✓ '+done.toLocaleString()+' lead'+(done===1?'':'s')+' returned to the Fresh pool from '+nm+' ('+crit+')');
+  else showToast('⚠ Only '+done.toLocaleString()+' of '+n.toLocaleString()+' leads were returned'+(fail?' — '+fail:' — no more matching leads')+'.','error');
 }
 async function clCountQ(isAdm){ const{count}=await clApplyFilters(sb.from('crm_leads').select('*',{count:'exact',head:true}),isAdm); return count||0; }
 
