@@ -554,7 +554,7 @@ tr:last-child td{border-bottom:none;}tr:hover td{background:#fafafa;cursor:point
 // login screen and logged to the console, so a quick hard refresh + glance
 // tells him definitively whether Netlify is actually serving THIS file yet,
 // instead of guessing at whether a reported bug was ever really fixed.
-const BUILD_STAMP='2026-11-15-login-activity';
+const BUILD_STAMP='2026-11-17-assign-unassign';
 console.log('[EdvantEdge CRM] build', BUILD_STAMP);
 const SB_URL='https://qyubbieikviesfcorusq.supabase.co';
 const SB_KEY=['eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF5','dWJiaWVpa3ZpZXNmY29ydXNxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU0OTkzNjEsImV4cCI6MjA5MTA3NTM2MX0.t_4mZWd_Qo1KHrGN9imMnnpn6UkLtLFrOeI2Q9lPD08'].join('');
@@ -3222,8 +3222,23 @@ const IMP_SYN={
   data_set:['data_set','dataset','data set','packet','data_packet','data packet'],
   alt_phone:['alt_phone','alt phone','alt_mobile','altphone','alternate_phone','phone2'],
   agent:['agent','agent_id','agent_name','assigned_to','agentname'],
-  phone_code:['phone_code','phonecode','country_code']
+  phone_code:['phone_code','phonecode','country_code'],
+  priority:['priority'],
+  relation:['relation','relationship'],
+  comments:['comments','comment','remarks','remark'],
+  notes:['notes','note'],
+  client_booked:['client_booked','client booked','client'],
+  demo_platform:['demo_platform','demo platform','platform'],
+  cooling_since:['cooling_since','cooling since'],
+  added_at:['added_at','added at','date added','created at']
 };
+// accepts 2026-11-17, 17/11/2026, 17-11-2026 → '2026-11-17'; anything else → null (never breaks the import)
+function impDate(v){
+  const t=String(v==null?'':v).trim(); let m;
+  if((m=t.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/))) return m[1]+'-'+m[2].padStart(2,'0')+'-'+m[3].padStart(2,'0');
+  if((m=t.match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{4})$/))) return m[3]+'-'+m[2].padStart(2,'0')+'-'+m[1].padStart(2,'0');
+  return null;
+}
 function _impKey(h){return String(h||'').trim().toLowerCase().replace(/[_\s]+/g,' ');}
 function impMapHeaders(row){
   // returns {field:index} when the row looks like a header row (must contain a mobile/phone column), else null
@@ -3259,7 +3274,7 @@ function impClean(f){
   if(!c||/^(child|your child)$/i.test(c)) c='Student';
   f.child_name=c;
   f.email=String(f.email||'').trim()||'email@example.com';
-  ['country','grade','city','timezone','ethnicity','disposition','data_set','alt_phone','agent'].forEach(k=>{f[k]=String(f[k]||'').trim();});
+  ['country','grade','city','timezone','ethnicity','disposition','data_set','alt_phone','agent','priority','relation','comments','notes','client_booked','demo_platform','cooling_since','added_at'].forEach(k=>{f[k]=String(f[k]||'').trim();});
   return f;
 }
 let _impXlsxPromise=null;
@@ -3324,7 +3339,8 @@ async function impRunCheck(){
       impClean(f);
       if(!f.data_set&&_imp.dsName) f.data_set=_imp.dsName;   // keep the file's own dataset name; use the typed name only when the file has none
       rows.push({row_no:++rowNo,country:f.country,parent_name:f.parent_name,child_name:f.child_name,grade:f.grade,mobile:mob,norm,
-        email:f.email,city:f.city,timezone:f.timezone,ethnicity:f.ethnicity,disposition:f.disposition,data_set:f.data_set,alt_phone:f.alt_phone,agent:f.agent,status:''});
+        email:f.email,city:f.city,timezone:f.timezone,ethnicity:f.ethnicity,disposition:f.disposition,data_set:f.data_set,alt_phone:f.alt_phone,agent:f.agent,
+        priority:f.priority,relation:f.relation,comments:f.comments,notes:f.notes,client_booked:f.client_booked,demo_platform:f.demo_platform,cooling_since:f.cooling_since,added_at:f.added_at,status:''});
     }
     if(!rows.length) throw new Error('No data rows were found in that file.');
     // 1) duplicates inside the file / 2) numbers already in the CRM
@@ -3417,8 +3433,10 @@ async function impStartUpload(){
     data_set:r.data_set||'', Zone:r.timezone, Country:normCountry(r.country)||impCountryFromNorm(r.norm), ethnicity:r.ethnicity,
     disposition:r.disposition||null,
     agent_id:(r.agent&&agentMap[String(r.agent).toLowerCase()])||null,
-    notes:lbl[r.status]?('Import check: '+lbl[r.status]):null,
-    import_batch_id:_imp.batchId, added_at:today, updated_at:now
+    notes:[r.notes,lbl[r.status]?('Import check: '+lbl[r.status]):''].filter(Boolean).join(' | ')||null,
+    priority:r.priority||null, relation:r.relation||null, comments:r.comments||null, client_booked:r.client_booked||null, demo_platform:r.demo_platform||null,
+    cooling_since:impDate(r.cooling_since),
+    import_batch_id:_imp.batchId, added_at:impDate(r.added_at)||today, updated_at:now
   }));
   _imp.progress={done:0,total:leads.length,errors:0,msgs:[]}; render();
   let inserted=0; const BATCH=500;
@@ -3435,7 +3453,7 @@ async function impStartUpload(){
     if(bar) bar.style.width=pct+'%'; if(pt) pt.textContent=pct+'%'; if(tx) tx.textContent=_imp.progress.done.toLocaleString()+' of '+leads.length.toLocaleString()+' leads';
   }
   // same follow-ups as the previous importer so new data shows up everywhere
-  if(S.cl){S.cl.counts=null;S.cl.datasets=[];S.cl.leads=[];}
+  if(S.cl){S.cl.counts=null;S.cl.datasets=[];S.cl.fv=null;S.cl.leads=[];}
   if(inserted>0){
     try{ await rebuildFilterCache(); }catch(e){ console.error('post-import rebuildFilterCache failed:',e); }
     try{
@@ -3491,7 +3509,7 @@ function renderImport(){
       <div class="card">
         <h3 style="margin:0 0 6px">What gets imported</h3>
         <p style="margin:0 0 10px;color:var(--text2);font-size:13px">These columns are read from your file:</p>
-        <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px">${['Country','Parent Name','Child Name','Grade','Mobile','Email','City','Time Zone','Ethnicity','Dispositions'].map(x=>`<span style="background:#eef3fb;color:#2c4a7c;border-radius:9px;padding:2px 10px;font-size:12px;font-weight:600">${x}</span>`).join('')}</div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px">${['Country','Parent Name','Child Name','Grade','Mobile','Phone Code','Alt Phone','Email','City','Time Zone','Ethnicity','Dispositions','Data Set','Agent','Priority','Relation','Comments','Notes','Client Booked','Demo Platform','Cooling Since','Added At'].map(x=>`<span style="background:#eef3fb;color:#2c4a7c;border-radius:9px;padding:2px 10px;font-size:12px;font-weight:600">${x}</span>`).join('')}</div>
         <p style="margin:0 0 10px;color:var(--text2);font-size:12px">Also read when present: <b>Data Set</b>, <b>Alt Phone</b>, <b>Agent</b>.</p>
         <table style="width:100%;font-size:13px;border-collapse:collapse">
           <tr style="text-align:left;color:var(--text2)"><th style="padding:4px 0">If this is…</th><th>We add</th></tr>
@@ -3555,19 +3573,19 @@ function renderImport(){
 }
 
 function downloadImportSample(){
-  // Headers EXACTLY match crm_leads column names (case-sensitive)
-  const headers=['Country','Parent Name','Child Name','Grade','Mobile','Email','City','Time Zone','Ethnicity','Dispositions','Data Set'];
+  // 22 columns — every one is understood by the importer (only Mobile is required; the rest are optional)
+  const headers=['Country','Parent Name','Child Name','Grade','Mobile','Phone Code','Alt Phone','Email','City','Time Zone','Ethnicity','Dispositions','Data Set','Agent','Priority','Relation','Comments','Notes','Client Booked','Demo Platform','Cooling Since','Added At'];
   const examples=[
-    ['United Kingdom','Sarah Johnson','Emily Johnson','Grade 5','447700900001','sarah@email.com','London','GMT','South Asian','','UK_FB_JUN26'],
-    ['USA','Michael Smith','Jake Smith','Grade 3','12025551234','michael@email.com','New York','EST','South Asian','','US_FB_JUN26'],
-    ['Australia','Priya Patel','Arya Patel','Grade 4','61412345678','priya@email.com','Sydney','AEST','South Asian','','AUS_FB_JUN26'],
+    ['United Kingdom','Sarah Johnson','Emily Johnson','Grade 5','447700900001','44','','sarah@email.com','London','GMT','South Asian','','UK_FB_JUN26','','','Mother','','','','','',''],
+    ['USA','Michael Smith','Jake Smith','Grade 3','12025551234','1','','michael@email.com','New York','EST','South Asian','','US_FB_JUN26','','','Father','','','','','',''],
+    ['Australia','Priya Patel','Arya Patel','Grade 4','61412345678','61','','priya@email.com','Sydney','AEST','South Asian','','AUS_FB_JUN26','','','Mother','','','','','',''],
   ];
   const csv=[headers,...examples].map(r=>r.map(v=>`"${v}"`).join(',')).join('\n');
   const a=document.createElement('a');
   a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
   a.download='EdvantEdge_Import_Template.csv';
   a.click();
-  showToast('Sample template downloaded');
+  showToast('Sample template downloaded ('+headers.length+' columns)');
 }
 
 
@@ -3767,7 +3785,7 @@ async function processImportFile(file){
     }
 
     // Clear All Leads cache so new data appears immediately on next visit
-    if(S.cl){S.cl.counts=null;S.cl.datasets=[];S.cl.leads=[];}
+    if(S.cl){S.cl.counts=null;S.cl.datasets=[];S.cl.fv=null;S.cl.leads=[];}
 
     // Rebuild the agent filter dropdown cache so new data packets (data_set),
     // zones, countries, grades etc. show up in agent filters right away —
@@ -10898,7 +10916,7 @@ function renderAgentInventory(){
 
 function renderInvMain(){
   var ss='padding:9px 12px;font-size:13px;background:#f8fafd;border:1px solid #e2e8f0;border-radius:8px;';
-  var loading=(_invLoading||!_invAgents.length)?'<tr><td colspan="5" style="text-align:center;padding:30px;color:var(--text3)"><span style="display:inline-block;width:16px;height:16px;border:3px solid #e2e8f0;border-top-color:var(--navy);border-radius:50%;animation:spin .6s linear infinite;vertical-align:middle;margin-right:6px"></span>Loading…</td></tr>':'';
+  var loading=(_invLoading||!_invAgents.length)?'<tr><td colspan="6" style="text-align:center;padding:30px;color:var(--text3)"><span style="display:inline-block;width:16px;height:16px;border:3px solid #e2e8f0;border-top-color:var(--navy);border-radius:50%;animation:spin .6s linear infinite;vertical-align:middle;margin-right:6px"></span>Loading…</td></tr>':'';
   var rows=_invAgents.map(function(r){
     var pct=r.total?Math.round(r.dialled/r.total*100):0;
     var col=pct>=60?'#1a8a5a':pct>=30?'#b7791f':'#c0392b';
@@ -10907,6 +10925,7 @@ function renderInvMain(){
       +'<td style="padding:12px 16px;text-align:right">'+fmt(r.total)+'</td>'
       +'<td style="padding:12px 16px;text-align:right;color:#1a8a5a;font-weight:700">'+fmt(r.dialled)+'</td>'
       +'<td style="padding:12px 16px;text-align:right;color:#c0392b;font-weight:700">'+fmt(r.fresh)+'</td>'
+      +'<td style="padding:12px 16px;text-align:right"><button class="btn btn-outline btn-sm" onclick="event.stopPropagation();unOpen(\''+r.id+'\')">↩ Unassign</button></td>'
       +'<td style="padding:12px 16px;text-align:right">'
       +'<div style="display:inline-flex;align-items:center;gap:6px">'
       +'<div style="width:70px;height:6px;background:#f0f4f9;border-radius:3px;overflow:hidden"><div style="width:'+pct+'%;height:100%;background:'+col+';border-radius:3px"></div></div>'
@@ -10922,7 +10941,7 @@ function renderInvMain(){
     +'<td style="padding:10px 16px">TOTAL ('+_invAgents.length+' agents)</td>'
     +'<td style="padding:10px 16px;text-align:right">'+fmt(tT)+'</td>'
     +'<td style="padding:10px 16px;text-align:right;color:#7ecfbd">'+fmt(tD)+'</td>'
-    +'<td style="padding:10px 16px;text-align:right;color:#f5a623">'+fmt(tF)+'</td>'
+    +'<td style="padding:10px 16px;text-align:right;color:#f5a623">'+fmt(tF)+'</td><td></td>'
     +'<td style="padding:10px 16px;text-align:right;color:#f5c518">'+tP+'%</td>'
     +'</tr>':'';
   return '<div class="pg-title" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">📦 Agent Inventory'
@@ -10934,6 +10953,7 @@ function renderInvMain(){
     +'<th style="padding:10px 16px;font-size:11px;font-weight:700;color:#8a9ab0;text-transform:uppercase;letter-spacing:.5px;text-align:right">Assigned</th>'
     +'<th style="padding:10px 16px;font-size:11px;font-weight:700;color:#8a9ab0;text-transform:uppercase;letter-spacing:.5px;text-align:right">Dialled</th>'
     +'<th style="padding:10px 16px;font-size:11px;font-weight:700;color:#8a9ab0;text-transform:uppercase;letter-spacing:.5px;text-align:right">Un-dialled</th>'
+    +'<th style="padding:10px 16px;font-size:11px;font-weight:700;color:#8a9ab0;text-transform:uppercase;letter-spacing:.5px;text-align:right">Take back</th>'
     +'<th style="padding:10px 16px;font-size:11px;font-weight:700;color:#8a9ab0;text-transform:uppercase;letter-spacing:.5px;text-align:right">Progress</th>'
     +'</tr></thead><tbody>'+(loading||rows)+totRow+'</tbody></table></div></div>';
 }
@@ -15882,6 +15902,16 @@ async function beRenameDataset(){
 // ═══════════════════════════════════════════════════════════════════════
 const CL_PAGE=100;
 
+// Option lists for the four database-driven filters. Built from the values last read from the database,
+// so they survive every redraw of the page (a redraw used to wipe them and leave only "All Datasets").
+function clSelOpts(key,label,sel){
+  const CL=S.cl||{}, fv=(CL.fv&&CL.fvCountry===CL.country)?CL.fv:null;
+  if(!fv) return '<option value="">All '+label+'</option>';
+  let vals=[], counts=null;
+  if(key==='ds'){ vals=(fv.datasets||[]).map(x=>x.n); counts=Object.fromEntries((fv.datasets||[]).map(x=>[x.n,x.c])); }
+  else vals=fv[{zone:'zones',grade:'grades',eth:'eth'}[key]]||[];
+  return '<option value="">All '+label+' ('+vals.length+')</option>'+vals.map(v=>'<option value="'+h(v)+'"'+(sel===v?' selected':'')+'>'+h(v)+(counts&&counts[v]!=null?' ('+Number(counts[v]).toLocaleString()+')':'')+'</option>').join('');
+}
 function clFilterBarHTML(isAdmin){
   const co=S.cl?.country||'Australia';
   return `<div class="card" style="margin-bottom:10px;padding:12px 14px">
@@ -15893,10 +15923,10 @@ function clFilterBarHTML(isAdmin){
       <input id="cl-p"  placeholder="🔍 Parent" style="padding:7px 9px;border:1.5px solid var(--border);border-radius:var(--r);font-size:12px;outline:none;width:120px">
       <input id="cl-ch" placeholder="🔍 Child"  style="padding:7px 9px;border:1.5px solid var(--border);border-radius:var(--r);font-size:12px;outline:none;width:110px">
       <input id="cl-ph" placeholder="🔍 Phone"  style="padding:7px 9px;border:1.5px solid var(--border);border-radius:var(--r);font-size:12px;outline:none;width:110px">
-      <select id="cl-zone"  onchange="clApplyFilter()" style="padding:7px 8px;border:1.5px solid var(--border);border-radius:var(--r);font-size:12px;outline:none"><option value="">All Zones</option></select>
-      <select id="cl-grade" onchange="clApplyFilter()" style="padding:7px 8px;border:1.5px solid var(--border);border-radius:var(--r);font-size:12px;outline:none"><option value="">All Grades</option></select>
-      <select id="cl-eth"   onchange="clApplyFilter()" style="padding:7px 8px;border:1.5px solid var(--border);border-radius:var(--r);font-size:12px;outline:none"><option value="">All Ethnicity</option></select>
-      <select id="cl-ds"    onchange="clApplyFilter()" style="padding:7px 8px;border:1.5px solid var(--border);border-radius:var(--r);font-size:12px;outline:none"><option value="">All Datasets</option></select>
+      <select id="cl-zone"  onchange="clApplyFilter()" style="padding:7px 8px;border:1.5px solid var(--border);border-radius:var(--r);font-size:12px;outline:none">${clSelOpts('zone','Zones',(S.cl&&S.cl.filters||{}).zone)}</select>
+      <select id="cl-grade" onchange="clApplyFilter()" style="padding:7px 8px;border:1.5px solid var(--border);border-radius:var(--r);font-size:12px;outline:none">${clSelOpts('grade','Grades',(S.cl&&S.cl.filters||{}).grade)}</select>
+      <select id="cl-eth"   onchange="clApplyFilter()" style="padding:7px 8px;border:1.5px solid var(--border);border-radius:var(--r);font-size:12px;outline:none">${clSelOpts('eth','Ethnicity',(S.cl&&S.cl.filters||{}).eth)}</select>
+      <select id="cl-ds"    onchange="clApplyFilter()" style="padding:7px 8px;border:1.5px solid var(--border);border-radius:var(--r);font-size:12px;outline:none">${clSelOpts('ds','Datasets',(S.cl&&S.cl.filters||{}).ds)}</select>
       ${isAdmin?`<select id="cl-disp" onchange="clApplyFilter()" style="padding:7px 8px;border:1.5px solid var(--border);border-radius:var(--r);font-size:12px;outline:none">
         <option value="Fresh">Fresh – unassigned pool (no disposition)</option>
         <option value="all">── Show All (incl. worked) ──</option>
@@ -15921,6 +15951,9 @@ function clFilterBarHTML(isAdmin){
       <select id="cl-asg-agent" style="padding:7px 8px;border:1.5px solid var(--border);border-radius:var(--r);font-size:12px;outline:none"><option value="">Select agent…</option>${(S.users||[]).filter(u=>u.role==='agent'&&u.active!==false).map(a=>`<option value="${h(a.id)}">${h(a.name)}</option>`).join('')}</select>
       <input id="cl-asg-n" type="number" min="1" placeholder="How many (blank = all)" style="padding:7px 9px;border:1.5px solid var(--border);border-radius:var(--r);font-size:12px;outline:none;width:150px">
       <button class="btn btn-red btn-sm" onclick="clAssignFiltered()">Assign</button>
+      <span style="margin-left:14px;font-size:12px;font-weight:700;color:var(--navy)">↩ Take back unused leads from:</span>
+      <select id="cl-un-agent" style="padding:7px 8px;border:1.5px solid var(--border);border-radius:var(--r);font-size:12px;outline:none"><option value="">Select agent…</option>${(S.users||[]).filter(u=>u.role==='agent'&&u.active!==false).map(a=>`<option value="${h(a.id)}">${h(a.name)}</option>`).join('')}</select>
+      <button class="btn btn-outline btn-sm" onclick="unOpen(document.getElementById('cl-un-agent').value)">Unassign…</button>
     </div>`:''}
   </div>`;
 }
@@ -16063,7 +16096,7 @@ async function clInit(isAdmin){
 
 async function clSelectCountry(country){
   if(!S.cl) S.cl={};
-  S.cl.country=country; S.cl.page=0; S.cl.filters={}; S.cl.datasets=[]; S.cl.leads=[];
+  S.cl.country=country; S.cl.page=0; S.cl.filters={}; S.cl.datasets=[]; S.cl.fv=null; S.cl.leads=[];
   S.cl.counts=null; // clear cache so counts refresh
   S.viewMode='list'; S.currentLead=null; // avoid flashing the previous lead's detail while the new country loads
   const isAdmin=isSA();
@@ -16083,38 +16116,26 @@ async function clLoadFilterValues(){
     'UAE':['United Arab Emirates','UAE','Middle East','Dubai','Abu Dhabi'],
   };
   const aliases=countryAliases[co]||[co];
-  // Fetch ALL filter values regardless of disposition so datasets/zones appear
-  // even for leads with Hot/worked dispositions. Dataset list comes from the
-  // crm_datasets lookup table (always complete, never capped at 1000 rows) —
-  // shown for all countries since a dataset name is global, not country-specific.
-  // Agents must only see filter values drawn from THEIR OWN leads, otherwise the
-  // dropdowns reveal the shape of the whole unassigned pool.
-  const _fv=(q)=> isSA() ? q : q.eq('agent_id', S.user.id);
-  const[zoR,dsAll,grR,etR]=await Promise.all([
-    _fv(sb.from('crm_leads').select('Zone')).in('Country',aliases).not('Zone','is',null).not('Zone','eq','').limit(5000),
-    // Build from the leads themselves, not the crm_datasets lookup table -- that
-    // table holds ~143 historical names, most with zero leads, so the dropdown
-    // was full of options that returned nothing.
-    isSA() ? sb.from('crm_leads').select('data_set').in('Country',aliases).not('data_set','is',null).limit(20000)
-           : sb.from('crm_leads').select('data_set').eq('agent_id',S.user.id).in('Country',aliases).not('data_set','is',null).limit(5000),
-    _fv(sb.from('crm_leads').select('grade')).in('Country',aliases).not('grade','is',null).limit(2000),
-    _fv(sb.from('crm_leads').select('ethnicity')).in('Country',aliases).not('ethnicity','is',null).limit(2000),
-  ]);
-  const uniq=(rows,col)=>[...new Set(rows.map(r=>r[col]).filter(Boolean))];
-  const sA=a=>[...a].sort((x,y)=>x.toLowerCase().localeCompare(y.toLowerCase()));
-  const sN=a=>[...a].sort((x,y)=>parseFloat(x)-parseFloat(y));
-  CL.datasets=sA([...new Set((dsAll.data||[]).map(r=>r.data_set).filter(Boolean))]);
-  clPop('cl-zone', sA(uniq(zoR.data||[],'Zone')),'Zones');
-  clPop('cl-grade',sN(uniq(grR.data||[],'grade')),'Grades');
-  clPop('cl-eth',  sA(uniq(etR.data||[],'ethnicity')),'Ethnicity');
-  clPop('cl-ds',CL.datasets,'Datasets');
+  // Every filter list is read straight from the database by one server function (no 1,000-row cap).
+  // Admin sees all leads of the country; an agent only sees values from their own leads.
+  let fv=null;
+  try{ const {data,error}=await sb.rpc('cl_filter_values',{p_aliases:aliases}); if(error) throw error; fv=data; }
+  catch(e){ console.error('filter values failed:',e); }
   const noteEl=document.getElementById('cl-filter-note');
-  if(noteEl) noteEl.textContent=`${CL.datasets.length} datasets · ${uniq(zoR.data||[],'Zone').length} zones`;
+  if(!fv){ if(noteEl) noteEl.textContent='Could not load filters — press Search to retry'; return; }
+  CL.datasets=(fv.datasets||[]).map(x=>x.n); CL.fv=fv; CL.fvCountry=co;
+  clPop('cl-zone', fv.zones||[],'Zones');
+  clPop('cl-grade',fv.grades||[],'Grades');
+  clPop('cl-eth',  fv.eth||[],'Ethnicity');
+  clPop('cl-ds',(fv.datasets||[]).map(x=>x.n),'Datasets',Object.fromEntries((fv.datasets||[]).map(x=>[x.n,x.c])));
+  if(noteEl) noteEl.textContent=`${(fv.datasets||[]).length} datasets · ${(fv.zones||[]).length} zones`;
 }
 
-function clPop(id,vals,label){
+function clPop(id,vals,label,counts){
   const el=document.getElementById(id);if(!el)return;
-  el.innerHTML=`<option value="">All ${label} (${vals.length})</option>`+vals.map(v=>`<option value="${h(v)}">${h(v)}</option>`).join('');
+  const keep=el.value;
+  el.innerHTML=`<option value="">All ${label} (${vals.length})</option>`+vals.map(v=>`<option value="${h(v)}">${h(v)}${counts&&counts[v]!=null?' ('+Number(counts[v]).toLocaleString()+')':''}</option>`).join('');
+  if(keep&&vals.includes(keep)) el.value=keep;
 }
 
 function clApplyFilters(q, isAdminOverride){
@@ -16225,40 +16246,107 @@ function clAdminExtraCells(l){
   return '<td style="font-size:11px;font-weight:700;color:'+(n===0?'#065f46':'#92400e')+'">'+dialLabel(n)+'</td><td style="text-align:center;font-weight:700">'+n+'</td>'
     +BK_CLIENTS.map(c=>cc(bc.per[c])).join('')+cc(bc.other)+'<td style="text-align:center;font-weight:800">'+bc.total+'</td>';
 }
-// Assign the leads that match the current All Leads filters (incl. the Dial Count filter) to one agent
+// Assign the leads that match the current All Leads filters (incl. the Dial Count filter) to one agent.
+// The database does the update in safe batches (assign_leads_by_ids); the count is checked after every batch,
+// so the result is either the full number asked for, or a clear message saying how many went through and why.
 async function clAssignFiltered(){
-  const CL=S.cl||{}, f=CL.filters||{}, agId=document.getElementById('cl-asg-agent')?.value;
+  if(S._asgBusy) return;
+  const CL=S.cl||{}, f=CL.filters||{}, agEl=document.getElementById('cl-asg-agent'), nEl=document.getElementById('cl-asg-n'), agId=agEl?.value;
   if(!agId){ showToast('Select an agent first','error'); return; }
   const ag=(S.users||[]).find(u=>u.id===agId);
   const total=CL.total||0; if(!total){ showToast('No leads match the current filters','error'); return; }
-  const want=parseInt(document.getElementById('cl-asg-n')?.value)||total, n=Math.min(want,total);
+  const raw=(nEl?.value||'').trim(), want=raw===''?total:parseInt(raw,10);
+  if(!(want>=1)){ showToast('Enter how many leads to assign (a whole number, 1 or more)','error'); return; }
+  if(want>total){ showToast('Only '+total.toLocaleString()+' lead'+(total===1?'':'s')+' match the filters — enter '+total.toLocaleString()+' or less','error'); return; }
+  const n=want;
   // Leads from the unassigned pool are only taken if nobody else already holds them.
   // Re-assigning an agent's existing leads happens only when that agent is picked in the Agent filter.
   const fromAgent=(f.agent&&f.agent!=='__none')?f.agent:null;
   if(fromAgent===agId){ showToast('These leads already belong to that agent','error'); return; }
   if(!confirm('Assign '+n.toLocaleString()+' lead'+(n===1?'':'s')+' to '+(ag?.name||'this agent')+(fromAgent?' (moving them from another agent)':' from the unassigned pool')+'?')) return;
-  const btn=document.querySelector('[onclick="clAssignFiltered()"]'); if(btn){ btn.disabled=true; btn.textContent='Assigning…'; }
+  const btn=document.querySelector('[onclick="clAssignFiltered()"]'); S._asgBusy=true;
+  if(btn){ btn.disabled=true; btn.textContent='Assigning 0 / '+n.toLocaleString()+'…'; }
+  let done=0, fail='', zero=0;
   try{
-    const ids=[];
-    while(ids.length<n){
+    while(done<n){
+      const take=Math.min(1000,n-done);
       let q=clBuildQ('id',true); if(!fromAgent) q=q.is('agent_id',null);
-      const {data,error}=await q.order('id').range(ids.length,Math.min(ids.length+999,n-1));
-      if(error) throw error; if(!data||!data.length) break; data.forEach(r=>ids.push(r.id));
+      const {data,error}=await q.order('id').range(0,take-1);        // assigned leads leave this list, so we always read from the top
+      if(error) throw error; if(!data||!data.length) break;
+      const {data:cnt,error:e2}=await sb.rpc('assign_leads_by_ids',{p_ids:data.map(r=>r.id),p_agent:agId,p_from:fromAgent});
+      if(e2) throw e2;
+      done+=cnt||0;
+      if(!cnt){ if(++zero>=2){ fail='the remaining leads were taken by someone else'; break; } } else zero=0;
+      if(btn) btn.textContent='Assigning '+done.toLocaleString()+' / '+n.toLocaleString()+'…';
+      await new Promise(r=>setTimeout(r,0));                          // let the page breathe between batches
     }
-    const now=new Date().toISOString(); let done=0;
-    for(let i=0;i<ids.length;i+=500){
-      let u=sb.from('crm_leads').update({agent_id:agId,agent_name:ag?.name||null,updated_at:now}).in('id',ids.slice(i,i+500));
-      u=fromAgent?u.eq('agent_id',fromAgent):u.is('agent_id',null);      // never overwrite a lead someone else just got
-      const {data,error}=await u.select('id');
-      if(error) throw error; done+=(data||[]).length;
+  }catch(e){ fail=e.message||String(e); }
+  S._asgBusy=false;
+  if(done<n&&!fail) fail='no more matching leads were available';
+  // refresh everything that shows counts, then clear the controls so the next agent can be picked straight away
+  try{ if(S.cl){S.cl.counts=null;} try{ await loadAsgnData(); }catch(e){} _invAgents=[]; await clInit(true); }catch(e){ console.error('refresh after assign:',e); }
+  const ag2=document.getElementById('cl-asg-agent'), n2=document.getElementById('cl-asg-n'); if(ag2) ag2.value=''; if(n2) n2.value='';
+  const b2=document.querySelector('[onclick="clAssignFiltered()"]'); if(b2){ b2.disabled=false; b2.textContent='Assign'; }
+  if(done===n) showToast('✓ Exactly '+done.toLocaleString()+' lead'+(done===1?'':'s')+' assigned to '+(ag?.name||'agent')+'. Unassigned now: '+(S.cl?.total??0).toLocaleString());
+  else showToast('⚠ Only '+done.toLocaleString()+' of '+n.toLocaleString()+' leads were assigned to '+(ag?.name||'agent')+' — '+fail+'. Nothing else was changed.','error');
+}
+
+// ── Unassign: take unused leads back from an agent into the Fresh pool ──
+let _un={agent:'',name:'',pv:null,busy:false};
+async function unOpen(agentId){
+  if(!agentId){ showToast('Select an agent first','error'); return; }
+  const ag=(S.users||[]).find(u=>u.id===agentId);
+  _un={agent:agentId,name:ag?.name||agentId,pv:null,busy:false};
+  let ov=document.getElementById('un-ov'); if(ov) ov.remove();
+  ov=document.createElement('div'); ov.id='un-ov';
+  ov.style.cssText='position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px';
+  document.body.appendChild(ov); unDraw();
+  try{
+    const {data,error}=await sb.rpc('unassign_preview',{p_agent:agentId}); if(error) throw error; _un.pv=data;
+  }catch(e){ _un.err=e.message||String(e); }
+  unDraw();
+}
+function unClose(){ if(_un.busy) return; document.getElementById('un-ov')?.remove(); }
+function unDraw(){
+  const ov=document.getElementById('un-ov'); if(!ov) return;
+  const pv=_un.pv, inc=document.getElementById('un-inc')?.checked||false, keepN=document.getElementById('un-n')?.value;
+  const max=pv?(inc?Number(pv.assigned):Number(pv.unworked)):0;
+  const rows=pv?(pv.by_disp||[]).map(r=>`<tr><td style="padding:4px 8px">${h(r.d)}</td><td style="padding:4px 8px;text-align:right;font-weight:700">${Number(r.n).toLocaleString()}</td></tr>`).join(''):'';
+  ov.innerHTML=`<div style="background:#fff;border-radius:12px;max-width:460px;width:100%;max-height:90vh;overflow:auto;padding:20px">
+    <div style="font-size:16px;font-weight:800;margin-bottom:4px">↩ Unassign leads — ${h(_un.name)}</div>
+    <div style="font-size:12px;color:var(--text2);margin-bottom:12px">Unused leads go back to the Fresh pool and leave this agent's inventory. Lead history is kept.</div>
+    ${!pv?(_un.err?`<div style="color:#b91c1c">Could not load: ${h(_un.err)}</div>`:'<div style="padding:20px;text-align:center;color:var(--text2)">⏳ Loading…</div>'):`
+    <div style="display:flex;gap:10px;margin-bottom:10px">
+      <div class="card" style="flex:1;padding:8px 12px"><div style="font-size:11px;color:var(--text2)">Assigned</div><div style="font-size:20px;font-weight:800">${Number(pv.assigned).toLocaleString()}</div></div>
+      <div class="card" style="flex:1;padding:8px 12px"><div style="font-size:11px;color:var(--text2)">Unused (can return)</div><div style="font-size:20px;font-weight:800;color:#16a34a">${Number(pv.unworked).toLocaleString()}</div></div></div>
+    <table style="width:100%;font-size:12px;margin-bottom:10px"><thead><tr style="background:#f8fafd"><th style="text-align:left;padding:4px 8px">Current status</th><th style="text-align:right;padding:4px 8px">Leads</th></tr></thead><tbody>${rows}</tbody></table>
+    <label style="font-size:12px;display:flex;gap:6px;align-items:center;margin-bottom:8px"><input id="un-inc" type="checkbox" ${inc?'checked':''} onchange="unDraw()"> Also take back leads already worked (dialled / disposed)</label>
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px"><span style="font-size:12px;font-weight:700">How many?</span>
+      <input id="un-n" type="number" min="1" max="${max}" value="${keepN!=null&&keepN!==''?h(keepN):max}" style="width:110px;padding:7px;border:1.5px solid var(--border);border-radius:var(--r);font-size:13px"> <span style="font-size:12px;color:var(--text2)">of ${max.toLocaleString()} eligible</span></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn btn-outline btn-sm" onclick="unClose()">Cancel</button>
+      <button class="btn btn-red btn-sm" id="un-go" onclick="unRun()" ${max?'':'disabled'}>Unassign</button></div>`}
+  </div>`;
+}
+async function unRun(){
+  if(_un.busy||!_un.pv) return;
+  const inc=document.getElementById('un-inc')?.checked||false, max=inc?Number(_un.pv.assigned):Number(_un.pv.unworked);
+  const n=parseInt(document.getElementById('un-n')?.value,10);
+  if(!(n>=1)||n>max){ showToast('Enter a number between 1 and '+max.toLocaleString(),'error'); return; }
+  if(!confirm('Take back '+n.toLocaleString()+' '+(inc?'':'unused ')+'lead'+(n===1?'':'s')+' from '+_un.name+' and return them to the Fresh pool?')) return;
+  _un.busy=true; const go=document.getElementById('un-go'); if(go){ go.disabled=true; go.textContent='Working…'; }
+  let done=0, fail='';
+  try{
+    while(done<n){
+      const {data,error}=await sb.rpc('unassign_leads',{p_agent:_un.agent,p_n:Math.min(3000,n-done),p_include_worked:inc,p_dataset:null});
+      if(error) throw error; if(!data) break; done+=data;
+      if(go) go.textContent='Returned '+done.toLocaleString()+' / '+n.toLocaleString()+'…';
+      await new Promise(r=>setTimeout(r,0));
     }
-    // everything that shows counts is refreshed from the database
-    if(S.cl){S.cl.counts=null;}
-    try{ await loadAsgnData(); }catch(e){}
-    _invAgents=[];
-    await clInit(true);
-    showToast('✓ '+done.toLocaleString()+' leads assigned to '+(ag?.name||'agent')+(done<ids.length?' ('+(ids.length-done).toLocaleString()+' were taken by someone else meanwhile)':'')+'. Unassigned now: '+(S.cl?.total??0).toLocaleString());
-  }catch(e){ showToast('Assign error: '+(e.message||e),'error'); if(btn){ btn.disabled=false; btn.textContent='Assign'; } }
+  }catch(e){ fail=e.message||String(e); }
+  _un.busy=false; document.getElementById('un-ov')?.remove();
+  try{ if(S.cl) S.cl.counts=null; try{ await loadAsgnData(); }catch(e){} _invAgents=[]; if(S.page==='leads'&&S.leadsTab==='inv') await invLoadAgents(); else if(S.page==='leads') await clInit(true); }catch(e){ console.error('refresh after unassign:',e); }
+  if(done===n) showToast('✓ '+done.toLocaleString()+' lead'+(done===1?'':'s')+' returned to the Fresh pool from '+_un.name);
+  else showToast('⚠ Only '+done.toLocaleString()+' of '+n.toLocaleString()+' leads were returned'+(fail?' — '+fail:' — no more eligible leads')+'.','error');
 }
 async function clCountQ(isAdm){ const{count}=await clApplyFilters(sb.from('crm_leads').select('*',{count:'exact',head:true}),isAdm); return count||0; }
 
