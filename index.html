@@ -554,7 +554,7 @@ tr:last-child td{border-bottom:none;}tr:hover td{background:#fafafa;cursor:point
 // login screen and logged to the console, so a quick hard refresh + glance
 // tells him definitively whether Netlify is actually serving THIS file yet,
 // instead of guessing at whether a reported bug was ever really fixed.
-const BUILD_STAMP='2026-11-17-unassign-filters-shot';
+const BUILD_STAMP='2026-11-17-inventory-export';
 console.log('[EdvantEdge CRM] build', BUILD_STAMP);
 const SB_URL='https://qyubbieikviesfcorusq.supabase.co';
 const SB_KEY=['eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF5','dWJiaWVpa3ZpZXNmY29ydXNxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU0OTkzNjEsImV4cCI6MjA5MTA3NTM2MX0.t_4mZWd_Qo1KHrGN9imMnnpn6UkLtLFrOeI2Q9lPD08'].join('');
@@ -6318,7 +6318,7 @@ async function bkShotLoadExisting(bid){
   bkShotDraw();
 }
 // upload only when a NEW picture was chosen; the previous file is removed after the new one is saved
-async function bkShotSave(bid){
+async function bkShotSave(bid,rec){
   const s=_bkShot; if(!s.blob||!bid) return;
   const ext=s.blob.type==='image/png'?'png':'jpg', path=bid+'/'+Date.now()+'.'+ext, old=s.existing&&s.existing.path;
   const {error}=await sb.storage.from('demo-screenshots').upload(path,s.blob,{contentType:s.blob.type||'image/jpeg',upsert:false,cacheControl:'3600'});
@@ -6327,6 +6327,18 @@ async function bkShotSave(bid){
   if(e2){ try{ await sb.storage.from('demo-screenshots').remove([path]); }catch(x){} throw e2; }
   if(old&&old!==path){ try{ await sb.storage.from('demo-screenshots').remove([old]); }catch(x){} }
   _bkShotIds.add(bid);
+  bkShotMirrorPortal(rec||(_bkBookings||[]).find(b=>b.id===bid),path);      // never blocks or fails the save
+}
+// permanent, unguessable link (booking id + upload time in the address); used in exports and the client portal
+function bkShotUrl(path){ try{ return sb.storage.from('demo-screenshots').getPublicUrl(path).data.publicUrl||''; }catch(e){ return ''; } }
+async function bkShotMirrorPortal(rec,path){
+  try{
+    if(!rec||!path||!['Turito','Vedantu','JustTutor','Edvantedge'].includes(rec.client)) return;
+    const args={p_client:rec.client,p_source_id:rec.phone_code||null,p_subject_booked:rec.subject_booked||null,p_child_name:rec.child_name||null,p_url:bkShotUrl(path)};
+    let r=await sbTurito.rpc('ingest_booking_screenshot',args);
+    if(!r.error&&!r.data){ await new Promise(z=>setTimeout(z,2500)); r=await sbTurito.rpc('ingest_booking_screenshot',args); }   // the portal row may still be arriving
+    if(r.error) console.warn('portal screenshot link failed:',r.error.message);
+  }catch(e){ console.warn('portal screenshot link failed:',e); }
 }
 async function bkShotOpen(bid,dl){
   try{
@@ -6836,7 +6848,7 @@ async function bkStandaloneSave(){
     }
     // Screenshot is optional: the booking is already saved, so a failed upload never undoes it
     if(_bkShot.blob){
-      try{ await bkShotSave(_savedBid); showToast('Screenshot saved'); }
+      try{ await bkShotSave(_savedBid,rec); showToast('Screenshot saved'); }
       catch(se){ console.error('screenshot upload failed:',se); showToast('Booking saved, but the screenshot could not be uploaded ('+(se.message||se)+'). Open the booking, press Edit and try again.','error'); }
     }
     _bkLoaded=false;
@@ -8604,7 +8616,7 @@ async function bkSaveRS(){
 }
 
 // ── Export CSV ──
-function bkExportCSV(){
+async function bkExportCSV(){
   if(!isSA()){bkToast('Only Admin can export','error');return;}
   const bf=S.bkFilter||{};
   const bkFrom=S.bkFrom||'2025-01-01', bkTo=S.bkTo||'2030-12-31';
@@ -8626,9 +8638,17 @@ function bkExportCSV(){
   if(bf.demoDate) src=src.filter(b=>b.demo_date===bf.demoDate);
   if(bf.search){const s=bf.search.toLowerCase();src=src.filter(b=>(b.parent_name||'').toLowerCase().includes(s)||(b.phone_code||'').includes(s)||(b.child_name||'').toLowerCase().includes(s));}
   // 23 headers matching DEMO-BOOKING columns exactly
-  const HDRS=['Demo Scheduled Date','Agent','Parent Name','Child Name','Phone Code','Alt Phone','Email','City','Zone','Country','Grade','Ethnicity','Dataset','Recording Link','Client','Subject Booked','Demo Date','Demo Time','Demo Date IST','Demo Time IST','Disposition','Status','Notes'];
+  const HDRS=['Demo Scheduled Date','Agent','Parent Name','Child Name','Phone Code','Alt Phone','Email','City','Zone','Country','Grade','Ethnicity','Dataset','Recording Link','Client','Subject Booked','Demo Date','Demo Time','Demo Date IST','Demo Time IST','Disposition','Status','Notes','Demo Screenshot URL'];
   const COLS=['demo_scheduled_date','agent','parent_name','child_name','phone_code','alt_phone','email','city','zone','country','grade','ethnicity','dataset','recording_link','client','subject_booked','demo_date','demo_time','demo_date_ist','demo_time_ist','disposition','status','notes'];
-  const rows=src.map(b=>COLS.map(c=>b[c]!==null&&b[c]!==undefined?b[c]:''));
+  // screenshot links: one per booking id, blank when none was uploaded; written as a clickable =HYPERLINK so Excel opens it on click
+  const shotUrl={};
+  try{
+    for(let p=0;p<50;p++){
+      const {data,error}=await sb.from('booking_attachments').select('booking_id,path').range(p*1000,p*1000+999);
+      if(error) throw error; (data||[]).forEach(r=>{ shotUrl[r.booking_id]=bkShotUrl(r.path); }); if(!data||data.length<1000) break;
+    }
+  }catch(e){ console.warn('screenshot links not loaded for export:',e); bkToast('Screenshot links could not be loaded — exporting without them','error'); }
+  const rows=src.map(b=>{ const u=shotUrl[b.id]; return COLS.map(c=>b[c]!==null&&b[c]!==undefined?b[c]:'').concat([u?'=HYPERLINK("'+u+'","'+u+'")':'']); });
   // Sanitize cell values: escape quotes, strip embedded newlines (replace with space so Notes stay readable)
   const esc=v=>'"'+String(v).replace(/"/g,'""').replace(/\r\n|\r|\n/g,' ').trim()+'"';
   // Use \r\n row separator (RFC 4180) so Excel opens it cleanly without phantom rows
@@ -11042,6 +11062,7 @@ function renderInvMain(){
     +'</tr>':'';
   return '<div class="pg-title" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">📦 Agent Inventory'
     +'<button class="btn btn-sm btn-outline" onclick="invLoadAgents()" style="font-size:12px;padding:5px 12px">↻ Refresh</button></div>'
+    +invSummaryHTML()
     +'<div class="card">'
     +'<div class="tbl-wrap"><table style="width:100%;border-collapse:collapse">'
     +'<thead><tr style="background:#f8fafd;border-bottom:2px solid #e2e8f0">'
@@ -11051,24 +11072,70 @@ function renderInvMain(){
     +'<th style="padding:10px 16px;font-size:11px;font-weight:700;color:#8a9ab0;text-transform:uppercase;letter-spacing:.5px;text-align:right">Un-dialled</th>'
     +'<th style="padding:10px 16px;font-size:11px;font-weight:700;color:#8a9ab0;text-transform:uppercase;letter-spacing:.5px;text-align:right">Take back</th>'
     +'<th style="padding:10px 16px;font-size:11px;font-weight:700;color:#8a9ab0;text-transform:uppercase;letter-spacing:.5px;text-align:right">Progress</th>'
-    +'</tr></thead><tbody>'+(loading||rows)+totRow+'</tbody></table></div></div>';
+    +'</tr></thead><tbody>'+(loading||rows)+totRow+'</tbody></table></div></div>'
+    +invMatrixHTML();
 }
 
+// One database call returns every lead (assigned or in the pool) grouped by disposition; blank / NULL = '__fresh'.
+// Totals, the fresh count and the breakdown table all come from these same rows, so they always add up.
+let _invBreak=null;
 async function invLoadAgents(){
   _invLoading=true; if(invViewActive()) render();
-  var agents2=(S.users||[]).filter(function(u){return u.role==='agent'&&u.active!==false;});
-  var [tots,freshs]=await Promise.all([
-    Promise.all(agents2.map(function(ag){return sb.from('crm_leads').select('id',{count:'exact',head:true}).eq('agent_id',ag.id);})),
-    Promise.all(agents2.map(function(ag){return sb.from('crm_leads').select('id',{count:'exact',head:true}).eq('agent_id',ag.id).is('disposition',null);}))
-  ]);
-  _invAgents=agents2.map(function(ag,i){
-    var total=tots[i].count||0, fresh=freshs[i].count||0;
-    return {id:ag.id,name:ag.name,total:total,fresh:fresh,dialled:total-fresh};
-  }).sort(function(a,b){return b.total-a.total;});
+  var rows=[];
+  try{ var r=await sb.rpc('inventory_breakdown'); if(r.error) throw r.error; rows=r.data||[]; _invBreak=rows; }
+  catch(e){ console.error('inventory_breakdown:',e); showToast('Could not load inventory: '+(e.message||e),'error'); _invBreak=null; }
+  var per={}; rows.forEach(function(x){ if(x.a==null) return; var p=per[x.a]=per[x.a]||{total:0,fresh:0}; p.total+=Number(x.n); if(x.d==='__fresh') p.fresh+=Number(x.n); });
+  var nameOf={}; (S.users||[]).forEach(function(u){ nameOf[u.id]=u.name; });
+  var ids=new Set((S.users||[]).filter(function(u){return u.role==='agent'&&u.active!==false;}).map(function(u){return u.id;}));
+  Object.keys(per).forEach(function(k){ ids.add(k); });   // also leads held by inactive / unknown users, so nothing goes missing
+  _invAgents=[...ids].map(function(id){ var p=per[id]||{total:0,fresh:0}; return {id:id,name:nameOf[id]||('(inactive) '+id),total:p.total,fresh:p.fresh,dialled:p.total-p.fresh}; }).sort(function(a,b){return b.total-a.total;});
   _invLoading=false;
   if(invViewActive()) render();
 }
-
+const invDLabel=d=>d==='__fresh'?'Fresh / No Disposition':d;
+function invSummaryHTML(){
+  if(!_invBreak) return '';
+  var sum=function(f){ return _invBreak.reduce(function(t,x){ return f(x)?t+Number(x.n):t; },0); };
+  var assigned=sum(function(x){return x.a!=null;}), pool=sum(function(x){return x.a==null;}), poolFresh=sum(function(x){return x.a==null&&x.d==='__fresh';}), asgFresh=sum(function(x){return x.a!=null&&x.d==='__fresh';});
+  var card=function(l,v,c,sub){ return '<div class="card" style="padding:12px 16px"><div style="font-size:11px;color:var(--text2);font-weight:700;text-transform:uppercase">'+l+'</div><div style="font-size:24px;font-weight:800;color:'+(c||'inherit')+'">'+fmt(v)+'</div>'+(sub?'<div style="font-size:11px;color:var(--text3)">'+sub+'</div>':'')+'</div>'; };
+  return '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin-bottom:14px">'
+    +card('Assigned to agents',assigned,'#1a5fa8','of which fresh (no disposition): '+fmt(asgFresh))
+    +card('Unassigned (Fresh pool)',pool,'#b7791f','of which no disposition: '+fmt(poolFresh))
+    +card('All leads in CRM',assigned+pool,'#1a2535','assigned + unassigned')+'</div>';
+}
+function invMatrixHTML(){
+  if(!_invBreak) return '';
+  var cols=_invAgents.filter(function(a){return a.total>0;});
+  var get={}; _invBreak.forEach(function(x){ var k=(x.a==null?'__pool':x.a)+'|'+x.d; get[k]=(get[k]||0)+Number(x.n); });
+  var dTot={}; _invBreak.forEach(function(x){ dTot[x.d]=(dTot[x.d]||0)+Number(x.n); });
+  var disps=Object.keys(dTot).sort(function(a,b){ return a==='__fresh'?-1:b==='__fresh'?1:dTot[b]-dTot[a]; });
+  var th='padding:8px 10px;font-size:10px;font-weight:700;text-transform:uppercase;white-space:nowrap;text-align:right', td='padding:7px 10px;text-align:right;border-bottom:1px solid #f0f4f9';
+  var head='<tr style="background:var(--navy);color:#fff"><th style="'+th+';text-align:left;position:sticky;left:0;background:var(--navy)">Disposition</th>'
+    +cols.map(function(a){return '<th style="'+th+'">'+h(a.name)+'</th>';}).join('')
+    +'<th style="'+th+';background:#1a5fa8">Total assigned</th><th style="'+th+';background:#b7791f">Unassigned pool</th><th style="'+th+';background:#1a2535">All leads</th></tr>';
+  var body=disps.map(function(d){
+    var asg=0; var cells=cols.map(function(a){ var n=get[a.id+'|'+d]||0; asg+=n; return '<td style="'+td+(n?'':';color:#cbd5e0')+'">'+(n?fmt(n):'–')+'</td>'; }).join('');
+    var other=_invBreak.filter(function(x){return x.a!=null&&x.d===d&&!cols.some(function(c){return c.id===x.a;});}).reduce(function(t,x){return t+Number(x.n);},0);
+    var pool=get['__pool|'+d]||0, fresh=d==='__fresh';
+    return '<tr'+(fresh?' style="background:#fffbeb"':'')+'><td style="'+td+';text-align:left;font-weight:'+(fresh?'800':'600')+';position:sticky;left:0;background:'+(fresh?'#fffbeb':'#fff')+'">'+h(invDLabel(d))+'</td>'+cells
+      +'<td style="'+td+';font-weight:800;color:#1a5fa8">'+fmt(asg+other)+'</td><td style="'+td+';font-weight:800;color:#b7791f">'+(pool?fmt(pool):'–')+'</td><td style="'+td+';font-weight:800">'+fmt(dTot[d])+'</td></tr>';
+  }).join('');
+  var colTot=cols.map(function(a){ return '<td style="'+td+';font-weight:800">'+fmt(a.total)+'</td>'; }).join('');
+  var asgAll=_invBreak.reduce(function(t,x){return x.a!=null?t+Number(x.n):t;},0), poolAll=_invBreak.reduce(function(t,x){return x.a==null?t+Number(x.n):t;},0);
+  var foot='<tr style="background:#eef3fb"><td style="'+td+';text-align:left;font-weight:800;position:sticky;left:0;background:#eef3fb">TOTAL</td>'+colTot+'<td style="'+td+';font-weight:900">'+fmt(asgAll)+'</td><td style="'+td+';font-weight:900">'+fmt(poolAll)+'</td><td style="'+td+';font-weight:900">'+fmt(asgAll+poolAll)+'</td></tr>';
+  return '<div class="card" style="margin-top:14px"><div style="font-weight:800;margin-bottom:4px">📋 Disposition-wise breakdown — every lead, assigned and unassigned</div>'
+    +'<div style="font-size:11px;color:var(--text2);margin-bottom:8px">Leads with a blank disposition are counted as “Fresh / No Disposition”. Each column adds up to that agent’s total inventory.</div>'
+    +'<div class="tbl-wrap" style="overflow-x:auto"><table style="border-collapse:collapse;font-size:12px;min-width:100%">'+head+body+foot+'</table></div></div>';
+}
+function invAgentBreakHTML(tot){
+  if(!_invAllLeads.length) return '';
+  var m={}; _invAllLeads.forEach(function(l){ var d=l.disposition?l.disposition:'__fresh'; m[d]=(m[d]||0)+1; });
+  var ds=Object.keys(m).sort(function(a,b){ return a==='__fresh'?-1:b==='__fresh'?1:m[b]-m[a]; });
+  var sumN=ds.reduce(function(t,d){return t+m[d];},0);
+  return '<div class="card" style="margin-bottom:10px"><div style="font-weight:800;margin-bottom:6px">Disposition breakdown <span style="font-weight:400;font-size:12px;color:var(--text2)">— all '+fmt(tot)+' assigned leads</span></div>'
+    +'<div style="display:flex;flex-wrap:wrap;gap:8px">'+ds.map(function(d){ return '<div style="background:'+(d==='__fresh'?'#fffbeb':'#f6f8fb')+';border:1px solid #e2e8f0;border-radius:8px;padding:6px 12px;min-width:120px"><div style="font-size:11px;color:var(--text2)">'+h(invDLabel(d))+'</div><div style="font-size:18px;font-weight:800">'+fmt(m[d])+'</div></div>'; }).join('')
+    +'<div style="background:#1a2535;color:#fff;border-radius:8px;padding:6px 12px;min-width:120px"><div style="font-size:11px;opacity:.8">Total assigned'+(sumN===tot?' ✓':'')+'</div><div style="font-size:18px;font-weight:800">'+fmt(sumN)+'</div></div></div></div>';
+}
 function renderInvDetail(){
   var ag=_invCurAgent;
   var fc=_invFiltered.length;
@@ -11130,6 +11197,7 @@ function renderInvDetail(){
     +'<div style="background:#fff;border:1px solid var(--border);border-radius:8px;padding:6px 14px;text-align:center"><div style="font-size:18px;font-weight:900;color:#1a5fa8">'+fmt(ds)+'</div><div style="font-size:10px;color:var(--text3);text-transform:uppercase;font-weight:600">DS</div></div>'
     +'<button class="btn btn-sm btn-outline" onclick="invLoadLeads()" style="font-size:12px;padding:5px 12px">↻ Refresh</button>'
     +'</div></div>'
+    +invAgentBreakHTML(tot)
     // Assign bar
     +'<div style="background:#EEF6FF;border:1.5px solid #BFDBFE;border-radius:10px;padding:12px 16px;margin-bottom:10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">'
     +'<b style="font-size:14px;color:var(--navy);white-space:nowrap">'+fmt(fc)+' filtered leads</b>'
@@ -11209,17 +11277,21 @@ async function invDoAssign(){
   if(!toId){showToast('Please select a target agent','warn');return;}
   if(!count||count<1){showToast('Enter how many leads','warn');return;}
   var isFresh=toId==='__fresh__';
+  if(isFresh){ unOpen(_invCurAgent.id); return; }   // returning leads now goes through the Unassign window (keeps dispositions, filters by country / disposition / dataset)
   var agents2=(S.users||[]).filter(function(u){return u.role==='agent'&&u.active!==false;});
   var toName=isFresh?'Fresh Leads (unassigned pool)':agents2.find(function(a){return a.id===toId;})?.name||'agent';
   var toMove=Math.min(count,_invFiltered.length);
   if(!toMove){showToast('No filtered leads to assign','warn');return;}
   if(!confirm((isFresh?'Return ':'Assign ')+toMove+' leads to '+toName+'?')) return;
   var ids=_invFiltered.slice(0,toMove).map(function(l){return l.id;});
-  var upd=isFresh?{agent_id:null,agent_name:null,disposition:null,updated_at:new Date().toISOString()}:{agent_id:toId,updated_at:new Date().toISOString()};
-  for(var i=0;i<ids.length;i+=500){
-    await sb.from('crm_leads').update(upd).in('id',ids.slice(i,i+500));
-  }
-  showToast('✅ '+toMove+' leads '+(isFresh?'returned to Fresh Leads':'moved to '+toName));
+  var moved=0;
+  try{
+    for(var i=0;i<ids.length;i+=500){
+      var rr=await sb.rpc('assign_leads_by_ids',{p_ids:ids.slice(i,i+500),p_agent:toId,p_from:_invCurAgent.id});
+      if(rr.error) throw rr.error; moved+=rr.data||0;
+    }
+  }catch(e){ showToast('Move stopped after '+moved+' of '+toMove+' leads: '+(e.message||e),'error'); await invLoadLeads(); invLoadAgents(); return; }
+  showToast(moved===toMove?('✅ '+moved+' leads moved to '+toName):('⚠ Only '+moved+' of '+toMove+' leads moved to '+toName),moved===toMove?undefined:'error');
   await invLoadLeads();
   invLoadAgents();
 }
