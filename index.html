@@ -13,6 +13,8 @@ html{touch-action:pan-x pan-y pinch-zoom}
 :root{--black:#1a1a1a;--red:#c0392b;--red2:#e74c3c;--border:#e0e0e0;--bg2:#f9f9f9;--text2:#666;--text3:#999;--r:8px;--lg:12px;--green:#27ae60;}
 @keyframes dpPulse{0%,100%{opacity:1}50%{opacity:.25}}
 .no-copy *{-webkit-user-select:none;user-select:none;}
+.no-export [onclick*="xport"],.no-export [onclick*="Export"],.no-export [onclick*="Download"]{display:none!important}
+@media print{.no-export{display:none!important}}
 .no-copy input,.no-copy textarea,.no-copy select{-webkit-user-select:text;user-select:text;}
 .btn{padding:8px 16px;font-size:13px;border:1px solid #ccc;border-radius:var(--r);cursor:pointer;background:#fff;color:var(--black);font-family:inherit;transition:all .15s;}
 .btn:hover{background:#f0f0f0;}.btn:disabled{opacity:.4;cursor:not-allowed;}
@@ -554,7 +556,7 @@ tr:last-child td{border-bottom:none;}tr:hover td{background:#fafafa;cursor:point
 // login screen and logged to the console, so a quick hard refresh + glance
 // tells him definitively whether Netlify is actually serving THIS file yet,
 // instead of guessing at whether a reported bug was ever really fixed.
-const BUILD_STAMP='2026-11-17-inventory-export';
+const BUILD_STAMP='2026-11-18-team-admin';
 console.log('[EdvantEdge CRM] build', BUILD_STAMP);
 const SB_URL='https://qyubbieikviesfcorusq.supabase.co';
 const SB_KEY=['eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF5','dWJiaWVpa3ZpZXNmY29ydXNxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU0OTkzNjEsImV4cCI6MjA5MTA3NTM2MX0.t_4mZWd_Qo1KHrGN9imMnnpn6UkLtLFrOeI2Q9lPD08'].join('');
@@ -1058,6 +1060,13 @@ function _isFormField(el){
     e.preventDefault();
   }, true);
 });
+
+document.addEventListener('keydown',function(e){
+  if(!S.user||!isPartnerAdmin()) return;
+  var k=(e.key||'').toLowerCase();
+  if((e.ctrlKey||e.metaKey)&&['a','c','x','s','p','u'].includes(k)&&!_isFormField(e.target)){ e.preventDefault(); }
+  if(k==='printscreen'||k==='f12'){ e.preventDefault(); }
+},true);
 
 // ── Ctrl+Z / Cmd+Z Undo ─────────────────────────────────────────────────────
 // Keeps a short in-memory history of this session's own recent saves (lead
@@ -1809,6 +1818,7 @@ async function goPage(p){
       if(_restr.hidePages && _restr.hidePages.includes(p)) p='dashboard';
     }
   }
+  if(S.user&&isPartnerAdmin()){ const _sc=getAdminScope(); const _ok=(_sc&&_sc.allowPages)||['dashboard','bookings','loginlog','agentkitty','quality']; if(!_ok.includes(p)) p='dashboard'; }
   if(p==='bookings'){_bkLoaded=false;}
   if(p==='dashboard'){_agEarnLoaded=false;}
   // Clear any page-specific auto-refresh intervals when navigating
@@ -1916,7 +1926,7 @@ function wlFilter(k,v){
   else if(k==='search') _wlSearch=v.toLowerCase();
   if(k==='agent'||k==='country') wlLoad(); else _wlPaint();
 }
-function wlExport(){
+function wlExport(){if(isPartnerAdmin()){showToast('Not available for your account','error');return;}
   const rows=wlFiltered();
   if(!rows.length){ showToast('Nothing to export'); return; }
   const fields=['parent_name','child_name','phone_code','alt_phone','email','city','Zone','Country','grade','ethnicity','data_set','disposition','agent_id','updated_at'];
@@ -2194,7 +2204,7 @@ function daGetRows(){
   return rows;
 }
 
-function daExportCSV(){
+function daExportCSV(){if(isPartnerAdmin()){showToast('Not available for your account','error');return;}
   const rows=daGetRows();
   const headers=DA_COLS.map(c=>c.label);
   const lines=[headers.join(',')];
@@ -2614,7 +2624,7 @@ async function runReport(){
   }
 }
 
-async function exportReport(){
+async function exportReport(){if(isPartnerAdmin()){showToast('Not available for your account','error');return;}
   const box=document.getElementById('rp-res');
   const note=(html)=>{ if(box) box.insertAdjacentHTML('afterbegin', html); };
   try{
@@ -2681,7 +2691,7 @@ async function exFetchAll(buildQ){
   return out;
 }
 
-async function exportFiltered(){
+async function exportFiltered(){if(isPartnerAdmin()){showToast('Not available for your account','error');return;}
   const m=document.getElementById('ex-msg'); if(m) m.textContent='Preparing export…';
   const fr=document.getElementById('ex-fr')?.value||'';
   const to=document.getElementById('ex-to')?.value||'';
@@ -2707,7 +2717,7 @@ async function exportFiltered(){
   }catch(e){ if(m) m.innerHTML='<span style="color:#C0392B">Export failed: '+(e.message||e)+'</span>'; console.error('exportFiltered',e); }
 }
 
-async function exportAll(){
+async function exportAll(){if(isPartnerAdmin()){showToast('Not available for your account','error');return;}
   if(!confirm('Download ALL leads? This can be a very large file.')) return;
   const m=document.getElementById('ex-msg'); if(m) m.textContent='Fetching all leads…';
   try{
@@ -3111,7 +3121,7 @@ async function lgLoadDial(){
 }
 function lgPick(id,on){ on?_lg.sel.add(id):_lg.sel.delete(id); }
 function lgPickAll(on,ids){ ids.forEach(i=>on?_lg.sel.add(i):_lg.sel.delete(i)); render(); }
-async function lgDelete(){
+async function lgDelete(){if(isPartnerAdmin()){showToast('Not available for your account','error');return;}
   const ids=[..._lg.sel]; if(!ids.length){ showToast('Tick the records you want to delete','error'); return; }
   if(!confirm('Delete '+ids.length+' login record(s)? This cannot be undone.')) return;
   const {error}=await sb.rpc('login_log_delete',{p_ids:ids});
@@ -3140,7 +3150,7 @@ function lgCsv(name,head,rows){
   const blob=new Blob(['﻿'+[head].concat(rows).map(r=>r.map(q).join(',')).join('\r\n')],{type:'text/csv'});
   const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name; document.body.appendChild(a); a.click(); setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},500);
 }
-function lgExport(kind){
+function lgExport(kind){if(isPartnerAdmin()){showToast('Not available for your account','error');return;}
   const {D,sum,list}=lgCompute();
   if(kind==='sessions') lgCsv('login_activity_'+D.day+'.csv',['User','Login (IST)','Logout / last seen (IST)','Time online','IP','Location','Device','Browser','OS','Flags'],
     list.map(r=>[r.agent_name,lgIst(r.login_at,{dateStyle:'medium',timeStyle:'medium'}),lgIst(r.end,{dateStyle:'medium',timeStyle:'medium'}),lgFmtHMS(r.secs),r.ip,[r.city,r.region,r.country].filter(Boolean).join(', '),r.device,r.browser,r.os,(r._flags||[]).join(' / ')]));
@@ -3149,7 +3159,7 @@ function lgExport(kind){
 }
 function renderLoginLog(){
   const title='<div class="pg-title" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">🔐 Login Activity <span style="font-size:12px;font-weight:400;color:var(--text2)">Sessions, location &amp; dialling time. Location is approximate (from IP address).</span><button class="btn btn-sm btn-outline" onclick="_lg.rows=null;render()">↻ Refresh</button></div>';
-  if(!isSA()&&!(S.user&&S.user.role==='admin')) return title+'<div class="card">Only admins can see this page.</div>';
+  if(!isSA()&&!(S.user&&S.user.role==='admin')&&!isPartnerAdmin()) return title+'<div class="card">Only admins can see this page.</div>';
   if(_lg.rows===null){ if(!_lg.busy) setTimeout(lgLoad,0); return title+'<div class="card" style="text-align:center;padding:30px;color:var(--text2)">⏳ Loading…</div>'; }
   const {D,sum,list,online}=lgCompute(), all=_lg.rows, f=_lg.f, q=(f.q||'').toLowerCase();
   const rows=list.filter(r=>(!f.flagged||(r._flags||[]).length)&&(!q||[r.agent_name,r.username,r.ip,r.country,r.region,r.city,r.browser,r.os].join(' ').toLowerCase().includes(q)));
@@ -3176,8 +3186,8 @@ function renderLoginLog(){
   <div class="card" style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px">
     <select onchange="lgSet('user',this.value)" style="${sel}"><option value="">All users</option>${agents.map(([id,n])=>`<option value="${h(id)}" ${_lg.user===id?'selected':''}>${h(n)}</option>`).join('')}</select>
     <input type="date" value="${D.day}" onchange="lgSet('day',this.value)" style="${sel}">
-    <button class="btn btn-sm btn-outline" onclick="lgExport('sessions')">⬇ Login records (CSV)</button>
-    <button class="btn btn-sm btn-outline" onclick="lgExport('summary')">⬇ Hours &amp; dialling (CSV)</button>
+    ${isPartnerAdmin()?'':`<button class="btn btn-sm btn-outline" onclick="lgExport('sessions')">⬇ Login records (CSV)</button>
+    <button class="btn btn-sm btn-outline" onclick="lgExport('summary')">⬇ Hours &amp; dialling (CSV)</button>`}
   </div>
   <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:14px">
     ${stat('Online now',onlineIds.length,true)}${stat('Logins on '+lgIst(D.day+'T12:00:00Z',{day:'2-digit',month:'short'}),list.length)}${stat('Total login time (day)',lgFmtHM(totDay))}${stat('New IP / device',flagsN,flagsN>0)}
@@ -3191,7 +3201,7 @@ function renderLoginLog(){
     <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:10px"><b>🕘 Login records</b>
       <input placeholder="🔍 IP, city, browser…" value="${h(f.q)}" onchange="lgSet('q',this.value)" style="${sel};width:180px">
       <label style="font-size:12px;display:flex;gap:4px;align-items:center"><input type="checkbox" ${f.flagged?'checked':''} onchange="lgSet('flagged',this.checked)"> Only flagged</label>
-      <button class="btn btn-sm btn-red" style="margin-left:auto" onclick="lgDelete()">🗑 Delete selected${_lg.sel.size?' ('+_lg.sel.size+')':''}</button></div>
+      ${isPartnerAdmin()?'':`<button class="btn btn-sm btn-red" style="margin-left:auto" onclick="lgDelete()">🗑 Delete selected${_lg.sel.size?' ('+_lg.sel.size+')':''}</button>`}</div>
     <div class="tbl-wrap" style="max-height:520px"><table><thead class="dark-thead"><tr><th><input type="checkbox" onchange='lgPickAll(this.checked,${JSON.stringify(ids)})'></th><th>User</th><th>Status</th><th>Location</th><th>IP</th><th>Device</th><th>Login</th><th>Logout / last seen</th><th style="text-align:right">Time online</th></tr></thead>
     <tbody>${body||'<tr><td colspan="9" style="text-align:center;padding:24px;color:var(--text2)">No logins on this day.</td></tr>'}</tbody></table></div>
     <p style="font-size:11px;color:var(--text2);margin:8px 0 0">Times are IST. Flags compare each login with that user's earlier ones. IP-based location is approximate (VPNs, mobile networks and office networks can show a different city).</p>
@@ -7022,10 +7032,11 @@ function renderStandaloneBookings(){
 function renderAgentBookingsView(){
   if(S.viewMode==='detail'&&S.currentLead){return renderLeadDetail(S.currentLead);}
   const sa=isSA();
-  // Agents only see their own bookings; admin/superadmin see all
+  const adm=sa||isPartnerAdmin();
+  // Agents only see their own bookings; admin/superadmin see all (team admin: his team, enforced by the database)
   const _agentName=(S.user?.name||S.user?.username||'').toLowerCase();
   const _allClean=(_bkBookings||[]).filter(b=>b.agent!=='2026'&&b.agent!=='2025'&&(!b.client||!b.client.startsWith('http')));
-  const bks=sa?_allClean:_allClean.filter(b=>(b.agent||'').toLowerCase()===_agentName);
+  const bks=adm?_allClean:_allClean.filter(b=>(b.agent||'').toLowerCase()===_agentName);
   const total=bks.length;
   const todayStr=new Date().toISOString().slice(0,10);
   const TMR=new Date(Date.now()+86400000).toISOString().slice(0,10);
@@ -7166,12 +7177,12 @@ function renderAgentBookingsView(){
 
   return (
   '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px">'
-  +'<div style="font-size:18px;font-weight:700;color:#1a2535">📋 '+(sa?'Bookings — All Agents':'My Bookings')+'<span style="font-size:13px;font-weight:400;color:#8a9ab0;margin-left:8px">'+total+' total</span></div>'
+  +'<div style="font-size:18px;font-weight:700;color:#1a2535">📋 '+(sa?'Bookings — All Agents':(adm?'Bookings — My Team':'My Bookings'))+'<span style="font-size:13px;font-weight:400;color:#8a9ab0;margin-left:8px">'+total+' total</span></div>'
   +'<div style="display:flex;gap:7px;align-items:center">'
   +'<button onclick="_bkLoaded=false;bkLoad()" style="padding:6px 12px;background:#fff;border:1px solid #e2e6ed;border-radius:6px;font-size:12px;cursor:pointer;font-weight:600">↺ Refresh</button>'
   +(sa?'<button onclick="bkExportCSV()" style="padding:6px 12px;background:#fff;border:1px solid #e2e6ed;border-radius:6px;font-size:12px;cursor:pointer;font-weight:600">⬇ Export CSV</button>'
     +'<button onclick="bkOpenImport()" style="padding:6px 12px;background:#fff;border:1px solid #e2e6ed;border-radius:6px;font-size:12px;cursor:pointer;font-weight:600">⬆ Import CSV</button>':'')
-  +'<button onclick="bkStandaloneOpen(null)" style="padding:6px 14px;background:#C0392B;color:#fff;border:none;border-radius:6px;font-size:12px;cursor:pointer;font-weight:600">+ Add Lead</button>'
+  +(isPartnerAdmin()?'':'<button onclick="bkStandaloneOpen(null)" style="padding:6px 14px;background:#C0392B;color:#fff;border:none;border-radius:6px;font-size:12px;cursor:pointer;font-weight:600">+ Add Lead</button>')
   +'</div></div>'
 
   // PERIOD BAR
@@ -7297,7 +7308,7 @@ function renderAgentBookingsView(){
   );})() 
 
   // FILTER GRID
-  +'<div style="display:grid;grid-template-columns:1.5fr 1fr 1fr 1fr '+(sa?'1fr ':'')+' auto;gap:6px;padding:10px 14px;border-bottom:1px solid #e2e6ed;background:#fafbfc;align-items:center">'
+  +'<div style="display:grid;grid-template-columns:1.5fr 1fr 1fr 1fr '+(adm?'1fr ':'')+' auto;gap:6px;padding:10px 14px;border-bottom:1px solid #e2e6ed;background:#fafbfc;align-items:center">'
   +'<div style="display:flex;align-items:center;gap:6px;background:#fff;border:1px solid #e2e6ed;border-radius:6px;padding:6px 10px">'
   +'<span style="color:#8a9ab0;font-size:12px">🔍</span>'
   +'<input type="text" placeholder="Search name / phone / child" value="'+h(bf.search||'')+'" oninput="S.bkFilter={...(S.bkFilter||{}),search:this.value};render()" style="border:none;outline:none;font-size:11px;width:100%;background:none">'
@@ -7311,7 +7322,7 @@ function renderAgentBookingsView(){
   +'<select onchange="S.bkFilter={...(S.bkFilter||{}),country:this.value};render()" style="background:#fff;border:1px solid #e2e6ed;border-radius:6px;padding:6px 9px;font-size:11px;cursor:pointer;outline:none;width:100%">'
   +'<option value="">All Countries</option>'+uCountries.map(c=>'<option value="'+h(c)+'"'+(bf.country===c?' selected':'')+'>'+h(c)+'</option>').join('')
   +'</select>'
-  +(sa?'<select onchange="S.bkFilter={...(S.bkFilter||{}),agent:this.value};render()" style="background:#fff;border:1px solid #e2e6ed;border-radius:6px;padding:6px 9px;font-size:11px;cursor:pointer;outline:none;width:100%">'
+  +(adm?'<select onchange="S.bkFilter={...(S.bkFilter||{}),agent:this.value};render()" style="background:#fff;border:1px solid #e2e6ed;border-radius:6px;padding:6px 9px;font-size:11px;cursor:pointer;outline:none;width:100%">'
   +'<option value="">All Agents</option>'+[...new Set(bks.map(b=>b.agent).filter(Boolean))].map(ag=>'<option value="'+ag+'"'+(bf.agent===ag?' selected':'')+'>'+h(ag)+'</option>').join('')
   +'</select>':'')
   +'<button onclick="S.bkFilter={};render()" style="padding:6px 10px;background:#fff;border:1px solid #e2e6ed;border-radius:6px;font-size:11px;cursor:pointer;font-weight:600;white-space:nowrap">✕ Clear</button>'
@@ -9621,12 +9632,15 @@ async function loadAgentKitty(){
   S.page='agentkitty';
   render();
   try{
-    const {data} = await sb.from('crm_leads')
+    const _tIds=isPartnerAdmin()?(getScopedAgentIds()||[]):null;
+    let _kq = sb.from('crm_leads')
       .select('*')
       .in('disposition', WORKABLE_DISPS||['Hot','Call back(within 7 days)','Call Back After Exam','Demo Scheduled','Demo Done','Future Potential (outside 30 days)','Interested (within 15 days)','On Vacation','Partially Booked'])
       .not('agent_id','is',null)
       .order('updated_at',{ascending:false})
       .limit(1000);
+    if(_tIds) _kq=_kq.in('agent_id',_tIds.length?_tIds:['__none__']);
+    const {data} = await _kq;
     S.agentKittyLeads = data||[];
   }catch(e){
     console.error('loadAgentKitty error:',e);
@@ -10146,6 +10160,9 @@ const AGENT_NAV_RESTRICTIONS={
   kartik:{noEarnings:true},
   srijana:{noEarnings:true},
   krish:{noEarnings:true},
+  kartik1:{noEarnings:true},
+  sachin:{noEarnings:true},
+  srijana1:{noEarnings:true},
 };
 
 // ── Admin data-scope restrictions ─────────────────────────────────────────────
@@ -10154,7 +10171,7 @@ const AGENT_NAV_RESTRICTIONS={
 // 'noEarnings' = hide the Demo Earnings card on agent dashboard (if logged in as agent).
 const ADMIN_DATA_SCOPE={
   // ajinkya: channel partner — sees only Kartik & Krish data across all 8 pages
-  ajinkya:{agents:['kartik1','krish'],noEarnings:true,allowPages:['dashboard','performance','bookings','agentkitty','quality','leads','todayleads','reports']},
+  ajinkya:{agents:['kartik1','krish','sachin','srijana','srijana1'],noEarnings:true,allowPages:['dashboard','bookings','loginlog','agentkitty','quality']},
 };
 // Returns the scope config for the current user (admin only), or null.
 function getAdminScope(){
@@ -10166,6 +10183,11 @@ function getAdminScope(){
 // Returns the Supabase user IDs that the scoped admin is allowed to see.
 // Falls back to [] (no restriction) when no scope applies.
 function getScopedAgentIds(){
+  // Team Admin: team comes from the database (crm_users.cp_id = this admin's id)
+  if(S.user&&S.user.role==='partner_admin'){
+    const mine=(S.users||[]).filter(u=>u.cp_id&&u.cp_id===S.user.id).map(u=>u.id);
+    if(mine.length) return mine;
+  }
   const scope=getAdminScope();
   if(!scope) return null; // null = no restriction
   const usernames=scope.agents||[];
@@ -10257,7 +10279,7 @@ function renderApp(){
   // so agents can still type and paste there. Inline handlers here would re-block
   // paste inside those inputs regardless of that exemption, so they're intentionally
   // left off this wrapper now.
-  return`<div class="layout ${sa?'':'no-copy'}">
+  return`<div class="layout ${sa?'':'no-copy'} ${isPartnerAdmin()?'no-export':''}">
     <div class="mob-bar">
       <button class="mb-burger" onclick="toggleNav()" aria-label="Menu">&#9776;</button>
       <div class="mb-title">EDVANT<span>EDGE</span></div>
@@ -11321,7 +11343,7 @@ function renderAccessAlertsWidget(){
 function renderSADash(){
   const d=S.dash||{};
   const _dashTitle=isPartnerAdmin()?('My Dashboard &mdash; '+h(S.user.name)):'Dashboard';
-  const _dashSubtitle=isPartnerAdmin()?'Partner View &mdash; ':'Admin &mdash; ';
+  const _dashSubtitle=isPartnerAdmin()?'Team Admin &mdash; ':'Admin &mdash; ';
   return '<div class="pg-title" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">'+_dashTitle
     +'<span style="font-size:13px;font-weight:400;color:var(--text2)">'+_dashSubtitle+new Date().toLocaleDateString('en-IN',{weekday:'long',day:'2-digit',month:'long',year:'numeric'})+'</span>'
     +'<button class="btn btn-sm btn-outline" onclick="loadDash().then(()=>{render();onDashboardReady();}).catch(()=>render())" style="font-size:12px;padding:5px 12px">↻ Refresh</button></div>'
@@ -11332,8 +11354,8 @@ function renderSADash(){
     +'</div>'
     +'<div id="today-demo-schedule"><div style="color:var(--text3);font-size:12px;padding:8px 0;text-align:center">⏳ Loading demo schedule…</div></div>'
     +'</div>'
-    +(isPartnerAdmin()?'':'<div class="cr-card">'+'<div class="cr-top">'+'<span class="cr-top-title">📋 Closing Report</span>'+'<input type=\"date\" id=\"cr-date-input\" value=\"'+(_crDate||crToday())+'\" onchange=\"crLoad(this.value)\" style=\"padding:4px 9px;border:none;border-radius:7px;font-size:11px;font-weight:700;background:rgba(255,255,255,.15);color:#fff;cursor:pointer;outline:none\">'+'<button onclick=\"crLoad(document.getElementById(\'cr-date-input\').value)\" style=\"padding:4px 12px;background:rgba(255,255,255,.18);color:#fff;border:none;border-radius:8px;font-size:11px;font-weight:700;cursor:pointer\">↻</button>'+'<div class="cr-top-chips">'+'<div class="cr-chip"><span class="cn" id="cr-chip-ds" style="color:#f5c518">—</span><span>DS</span></div>'+'<div class="cr-chip"><span class="cn" id="cr-chip-aus" style="color:#7ecfbd">—</span><span>AUS</span></div>'+'<div class="cr-chip"><span class="cn" id="cr-chip-uk" style="color:#90bef5">—</span><span>UK</span></div>'+'<div class="cr-chip"><span class="cn" id="cr-chip-us" style="color:#c9a0f0">—</span><span>US</span></div>'+'<div class="cr-chip"><span class="cn" id="cr-chip-uae" style="color:#f5a623">—</span><span>🇦🇪 UAE</span></div>'+'<div class="cr-chip"><span class="cn" id="cr-chip-dd" style="color:#7ecfbd">—</span><span>D-Day</span></div>'+'<div class="cr-chip"><span class="cn" id="cr-chip-done" style="color:#1a8a5a">—</span><span>Done</span></div>'+'</div></div>'+'<div id="cr-body-dash"><div style="color:var(--text3);font-size:12px;padding:16px;text-align:center">⏳ Loading…</div></div>'+'</div>')
-    +'<div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-bottom:8px">'
+    +('<div class="cr-card">'+'<div class="cr-top">'+'<span class="cr-top-title">📋 Closing Report</span>'+'<input type=\"date\" id=\"cr-date-input\" value=\"'+(_crDate||crToday())+'\" onchange=\"crLoad(this.value)\" style=\"padding:4px 9px;border:none;border-radius:7px;font-size:11px;font-weight:700;background:rgba(255,255,255,.15);color:#fff;cursor:pointer;outline:none\">'+'<button onclick=\"crLoad(document.getElementById(\'cr-date-input\').value)\" style=\"padding:4px 12px;background:rgba(255,255,255,.18);color:#fff;border:none;border-radius:8px;font-size:11px;font-weight:700;cursor:pointer\">↻</button>'+'<div class="cr-top-chips">'+'<div class="cr-chip"><span class="cn" id="cr-chip-ds" style="color:#f5c518">—</span><span>DS</span></div>'+'<div class="cr-chip"><span class="cn" id="cr-chip-aus" style="color:#7ecfbd">—</span><span>AUS</span></div>'+'<div class="cr-chip"><span class="cn" id="cr-chip-uk" style="color:#90bef5">—</span><span>UK</span></div>'+'<div class="cr-chip"><span class="cn" id="cr-chip-us" style="color:#c9a0f0">—</span><span>US</span></div>'+'<div class="cr-chip"><span class="cn" id="cr-chip-uae" style="color:#f5a623">—</span><span>🇦🇪 UAE</span></div>'+'<div class="cr-chip"><span class="cn" id="cr-chip-dd" style="color:#7ecfbd">—</span><span>D-Day</span></div>'+'<div class="cr-chip"><span class="cn" id="cr-chip-done" style="color:#1a8a5a">—</span><span>Done</span></div>'+'</div></div>'+'<div id="cr-body-dash"><div style="color:var(--text3);font-size:12px;padding:16px;text-align:center">⏳ Loading…</div></div>'+'</div>')
+    +(isPartnerAdmin()?'':'<div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-bottom:8px">'
     +'<span style="font-size:12px;font-weight:700;color:var(--text2)">Activity:</span>'
     +['today','week','mtd'].map(function(p){var lbl={today:'Today',week:'This Week',mtd:'MTD'}[p];var ac=(S.pillPeriod||'today')===p;return '<button onclick="setPillPeriod(\''+p+'\')" style="padding:6px 14px;border-radius:14px;font-size:11px;font-weight:700;cursor:pointer;'+(ac?'background:var(--red);color:#fff;border:2px solid var(--red)':'background:#fff;color:#333;border:2px solid #ddd')+'">'+lbl+'</button>';}).join('')
     +'<input type="date" id="pill-from" value="'+(new Date(new Date().getTime()+5.5*3600000).toISOString().slice(0,10))+'" onchange="setPillCustom()" style="padding:4px 8px;border:1.5px solid var(--border);border-radius:8px;font-size:11px">'
@@ -11341,8 +11363,8 @@ function renderSADash(){
     +'<input type="date" id="pill-to" value="'+(new Date(new Date().getTime()+5.5*3600000).toISOString().slice(0,10))+'" onchange="setPillCustom()" style="padding:4px 8px;border:1.5px solid var(--border);border-radius:8px;font-size:11px">'
     +'<span style="font-size:11px;font-weight:700;color:#C0392B;background:#FEF2F2;padding:4px 10px;border-radius:10px;border:1px solid #FECACA">'+(S.pillPeriodLabel||'Today')+'</span>'
     +'<button onclick="pillExportCSV()" style="padding:6px 14px;background:#C0392B;color:#fff;border:none;border-radius:20px;font-size:11px;font-weight:800;cursor:pointer;letter-spacing:.02em">⬇ Export CSV</button>'
-    +'</div>'
-    +'<div id="admin-pill-table" style="display:block"></div>'
+    +'</div>')
+    +'<div id="admin-pill-table" style="display:'+(isPartnerAdmin()?'none':'block')+'"></div>'
     +(isPartnerAdmin()?'':'<div id="access-alerts-widget">'+renderAccessAlertsWidget()+'</div>'+'<div id="alloc-overview">'+renderAllocOverview()+'</div>')
     +(isPartnerAdmin()?'':'<div class="card" style="margin-bottom:1rem">'
     +'<div class="card-hdr" style="margin-bottom:12px;flex-wrap:wrap;gap:8px">'
@@ -12402,7 +12424,7 @@ async function runNonWorkableReport(){
     </div>`;
 }
 
-async function exportNonWorkable(){
+async function exportNonWorkable(){if(isPartnerAdmin()){showToast('Not available for your account','error');return;}
   const{data}=await buildNWQuery().select('parent_name,child_name,phone_code,Country,data_set,disposition,agent_id,updated_at').limit(50000);
   if(!data?.length){showToast('No Non-Workable leads found','warn');return;}
   const agentMap=Object.fromEntries((S.users||[]).map(u=>[u.id,u.name]));
@@ -15050,6 +15072,7 @@ async function loadPerfDataOnly(){
 }
 
 function onDashboardReady(){
+  if(S.user&&isPartnerAdmin()){ try{crDashInit();}catch(e){} return; }
   if(S.user&&S.user.role!=='agent'){
     loadPerfDataOnly().then(function(){loadAdminDashData();loadAgentStats();}).catch(function(){});
     refreshAdminPill();
@@ -15372,7 +15395,7 @@ else{if(wrap)wrap.style.display='flex';}
   // Update period label
   var lbl=document.getElementById('ad-period-label'); if(lbl) lbl.textContent=S.adDispLabel||'';
   if(p!=='custom') runAdminDisp();}
-function daExportPill(){
+function daExportPill(){if(isPartnerAdmin()){showToast('Not available for your account','error');return;}
   var body=document.getElementById('admin-disp-body');
   if(!body){ showToast('Run the analysis first'); return; }
   var rows=body.querySelectorAll('tbody tr');
@@ -15553,7 +15576,7 @@ function renderPillTableHTML(summary,assignedMap,pendingMap){
 }
 
 // ── Dashboard pill period selector ────────────────────────────────────────────
-function pillExportCSV(){
+function pillExportCSV(){if(isPartnerAdmin()){showToast('Not available for your account','error');return;}
   var el=document.getElementById('admin-pill-table');
   if(!el) return;
   var rows=[]; var agents=[];
@@ -16375,7 +16398,7 @@ function clApplyFilters(q, isAdminOverride){
 }
 function clBuildQ(sel,isAdm){ return clApplyFilters(sb.from('crm_leads').select(sel),isAdm); }
 
-async function clExportCSV(){
+async function clExportCSV(){if(isPartnerAdmin()){showToast('Not available for your account','error');return;}
   const btn=document.getElementById('cl-export-btn');
   if(btn){ btn.disabled=true; btn.textContent='Exporting…'; }
   try{
