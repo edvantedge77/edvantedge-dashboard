@@ -556,7 +556,7 @@ tr:last-child td{border-bottom:none;}tr:hover td{background:#fafafa;cursor:point
 // login screen and logged to the console, so a quick hard refresh + glance
 // tells him definitively whether Netlify is actually serving THIS file yet,
 // instead of guessing at whether a reported bug was ever really fixed.
-const BUILD_STAMP='2026-11-18-team-admin';
+const BUILD_STAMP='2026-11-20-galaxino';
 console.log('[EdvantEdge CRM] build', BUILD_STAMP);
 const SB_URL='https://qyubbieikviesfcorusq.supabase.co';
 const SB_KEY=['eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF5','dWJiaWVpa3ZpZXNmY29ydXNxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU0OTkzNjEsImV4cCI6MjA5MTA3NTM2MX0.t_4mZWd_Qo1KHrGN9imMnnpn6UkLtLFrOeI2Q9lPD08'].join('');
@@ -5683,7 +5683,7 @@ function renderViewAgentModal(id){
 function renderAddLeadPage(){
   const isSa=isSA();
   const agents=(S.users||[]).filter(u=>u.role==='agent'&&u.active!==false);
-  const clients=['Codyoung','Codingal','Turito','Vedantu','JustTutor','Edvantedge'];
+  const clients=['Codyoung','Codingal','Turito','Vedantu','JustTutor','Edvantedge','Galaxino'];
   const inp='width:100%;padding:9px 11px;border:1.5px solid var(--border);border-radius:var(--r);font-size:13px;outline:none;background:#fff';
   const lbl=(t,req)=>`<label style="font-size:11px;font-weight:700;color:var(--text2);display:block;margin-bottom:4px">${t}${req?' <span style="color:var(--red)">*</span>':''}</label>`;
   const fg=(content)=>`<div style="display:flex;flex-direction:column;margin-bottom:2px">${content}</div>`;
@@ -5744,7 +5744,7 @@ function renderAddLeadPage(){
         <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:8px" id="nl-client-btns">
           ${clients.map(c=>`<button class="nl-cbtn" onclick="nlSelectClient('${c}',this)"
             style="padding:10px 8px;border:1.5px solid #FCD34D;border-radius:8px;background:#fff;cursor:pointer;font-size:12px;font-weight:600;color:#92400E;transition:.15s">
-            ${c==='Codyoung'?'🔵':c==='Codingal'?'🟡':c==='Turito'?'🟠':c==='Vedantu'?'🟣':c==='JustTutor'?'🟪':'🟢'} ${c}
+            ${c==='Codyoung'?'🔵':c==='Codingal'?'🟡':c==='Turito'?'🟠':c==='Vedantu'?'🟣':c==='JustTutor'?'🟪':c==='Galaxino'?'🟧':'🟢'} ${c}
           </button>`).join('')}
         </div>
         <input type="hidden" id="nl-sdp" value="">
@@ -5969,7 +5969,7 @@ function renderEditLeadPage(){
         ${fg(lbl('Data Set')+`<input id="el-data_set" value="${v('data_set')}" placeholder="e.g. US_FB_JUN26" style="${inp}">`)}
         ${fg(lbl('Client')+`<select id="el-client_booked" style="${inp}">
           <option value="">— Select —</option>
-          ${['Codyoung','Codingal','Turito','Vedantu','JustTutor','Edvantedge','Flyingstars','Connect2Learn'].map(c=>`<option value="${c}" ${lead.client_booked===c?'selected':''}>${c}</option>`).join('')}
+          ${['Codyoung','Codingal','Turito','Vedantu','JustTutor','Edvantedge','Flyingstars','Connect2Learn','Galaxino'].map(c=>`<option value="${c}" ${lead.client_booked===c?'selected':''}>${c}</option>`).join('')}
         </select>`)}
         ${fg(lbl('Disposition')+`<select id="el-disposition" style="${inp}">
           <option value="">— None —</option>
@@ -6226,7 +6226,7 @@ async function doReassignLead(){
 
 // ═══ STANDALONE BOOKING MODULE ═══
 
-const BK_CLIENTS=['Codyoung','Codingal','Turito','Vedantu','JustTutor','Edvantedge'];
+const BK_CLIENTS=['Codyoung','Codingal','Turito','Vedantu','JustTutor','Edvantedge','Galaxino'];
 
 // ── CLIENT HISTORY ─────────────────────────────────────────────────────────
 // Maps 'YYYY-MM' → array of active client names for that month.
@@ -6244,7 +6244,7 @@ const CLIENT_HISTORY={
   '2026-08':['Codyoung','Codingal','Turito','Vedantu'],
   '2026-09':['Codyoung','Codingal','Turito','Vedantu','Edvantedge','JustTutor'],
   '2026-10':['Codyoung','Codingal','Turito','Vedantu','Edvantedge','JustTutor'],
-  '2026-11':['Codyoung','Codingal','Turito','Vedantu','Edvantedge','JustTutor'],
+  '2026-11':['Codyoung','Codingal','Turito','Vedantu','Edvantedge','JustTutor','Galaxino'],
 };
 // Returns the active client list for a given 'YYYY-MM' string.
 // Falls back to the most recent configured month if the key isn't found.
@@ -6343,7 +6343,7 @@ async function bkShotSave(bid,rec){
 function bkShotUrl(path){ try{ return sb.storage.from('demo-screenshots').getPublicUrl(path).data.publicUrl||''; }catch(e){ return ''; } }
 async function bkShotMirrorPortal(rec,path){
   try{
-    if(!rec||!path||!['Turito','Vedantu','JustTutor','Edvantedge'].includes(rec.client)) return;
+    if(!rec||!path||!['Turito','Vedantu','JustTutor','Edvantedge','Galaxino'].includes(rec.client)) return;
     const args={p_client:rec.client,p_source_id:rec.phone_code||null,p_subject_booked:rec.subject_booked||null,p_child_name:rec.child_name||null,p_url:bkShotUrl(path)};
     let r=await sbTurito.rpc('ingest_booking_screenshot',args);
     if(!r.error&&!r.data){ await new Promise(z=>setTimeout(z,2500)); r=await sbTurito.rpc('ingest_booking_screenshot',args); }   // the portal row may still be arriving
@@ -6469,7 +6469,7 @@ function bkClientFormCancel(){
 
 function _bkClientPickApply(cl){
   _bkSelClient=cl;
-  const cols={Flyingstars:'#C0392B',Codyoung:'#d4820a',Codingal:'#2471a3','Connect2Learn':'#1e8449',Turito:'#C97F00','Vedantu':'#1F618D','JustTutor':'#8E44AD','Edvantedge':'#16A085'};
+  const cols={Flyingstars:'#C0392B',Codyoung:'#d4820a',Codingal:'#2471a3','Connect2Learn':'#1e8449',Turito:'#C97F00','Vedantu':'#1F618D','JustTutor':'#8E44AD','Edvantedge':'#16A085','Galaxino':'#E67E22'};
   BK_CLIENTS.forEach(c=>{
     const el=document.getElementById('bksc_'+c.replace(/\s/g,'_'));
     if(!el)return;
@@ -6484,7 +6484,7 @@ function renderBkStandaloneModal(){
   const ed=S._bkEditData||{};
   const isEdit=!!S._bkEditId;
   const g=(f,fb)=>{const v=isEdit?(ed[f]||''):(lead?.[f]||'');return v||fb||'';};
-  const CC={Flyingstars:'#C0392B',Codyoung:'#d4820a',Codingal:'#2471a3','Connect2Learn':'#1e8449',Turito:'#C97F00','Vedantu':'#1F618D','JustTutor':'#8E44AD','Edvantedge':'#16A085'};
+  const CC={Flyingstars:'#C0392B',Codyoung:'#d4820a',Codingal:'#2471a3','Connect2Learn':'#1e8449',Turito:'#C97F00','Vedantu':'#1F618D','JustTutor':'#8E44AD','Edvantedge':'#16A085','Galaxino':'#E67E22'};
   const cards=BK_CLIENTS.map(cl=>'<div onclick="bkClientPick(\''+cl+'\')" id="bksc_'+cl.replace(/\s/g,'_')+'" style="border:2px solid '+(_bkSelClient===cl?CC[cl]:'#e2e6ed')+';background:'+(_bkSelClient===cl?CC[cl]+'18':'#fff')+';border-radius:8px;padding:10px;text-align:center;cursor:pointer;flex:1"><div style="width:10px;height:10px;border-radius:50%;background:'+CC[cl]+';margin:0 auto 5px"></div><div style="font-size:12px;font-weight:700">'+cl+'</div><div style="font-size:9px;color:#8a9ab0">'+(cl==='Codyoung'?'DS':'DD')+' Campaign</div></div>').join('');
   const f=(id,lbl,val,type,req,onch)=>'<div><label style="font-size:10px;font-weight:700;color:#8a9ab0;text-transform:uppercase;display:block;margin-bottom:4px">'+lbl+(req?' <span style="color:#e74c3c">*</span>':'')+'</label><input id="'+id+'" type="'+(type||'text')+'" value="'+(val||'')+'" style="width:100%;padding:9px 11px;border:1.5px solid #e2e6ed;border-radius:7px;font-size:13px;box-sizing:border-box" '+(onch?'onchange="'+onch+'"':'')+'></div>';
   const s=(id,lbl,opts,val,onch,req,disabledOpts)=>'<div><label style="font-size:10px;font-weight:700;color:#8a9ab0;text-transform:uppercase;display:block;margin-bottom:4px">'+lbl+(req?' <span style="color:#e74c3c">*</span>':'')+'</label><select id="'+id+'" '+(onch?'onchange="'+onch+'"':'')+' style="width:100%;padding:9px 11px;border:1.5px solid #e2e6ed;border-radius:7px;font-size:13px;box-sizing:border-box">'+opts.map(o=>{const dis=disabledOpts&&disabledOpts.includes(o);return'<option value="'+o+'" '+(val===o?'selected':'')+(dis?' disabled':'')+'>'+o+(dis?' (Admin only)':'')+'</option>';}).join('')+'</select></div>';
@@ -6965,7 +6965,7 @@ function renderStandaloneBookings(){
     if(!sa){const uname=(S.user?.name||S.user?.username||'').toLowerCase();if(!uname||((b.agent||'').toLowerCase()!==uname))return false;}
     return true;
   });
-  const CC={Flyingstars:'#C0392B',Codyoung:'#d4820a',Codingal:'#2471a3','Connect2Learn':'#1e8449',Turito:'#C97F00','Vedantu':'#1F618D','JustTutor':'#8E44AD','Edvantedge':'#16A085'};
+  const CC={Flyingstars:'#C0392B',Codyoung:'#d4820a',Codingal:'#2471a3','Connect2Learn':'#1e8449',Turito:'#C97F00','Vedantu':'#1F618D','JustTutor':'#8E44AD','Edvantedge':'#16A085','Galaxino':'#E67E22'};
   const SC={'Demo Scheduled':'#2471a3','Demo Done':'#1e8449','Not Interested':'#e74c3c','DNC':'#7d3c98','Did Not Attend':'#d4820a','Rescheduled':'#0e86d4','Cancelled':'#7f8c8d','Teacher Not Available':'#b7791f','No Demo Link':'#c05621','Demo Link Not Working':'#9b2c2c'};
   const agentOpts=sa?[...new Set(_cleanBks.map(b=>b.agent).filter(Boolean))].map(ag=>'<option value="'+ag+'" '+(_bkFilter.agent===ag?'selected':'')+'>'+ag+'</option>').join(''):'';
   const rows=filtered.length===0
@@ -7007,7 +7007,7 @@ function renderStandaloneBookings(){
     +(sa?'<button onclick="bkStandaloneOpen(null)" style="padding:7px 14px;background:#e74c3c;border:none;border-radius:7px;font-size:12px;cursor:pointer;font-weight:700;color:#fff">+ Add Lead</button>':'')
     +'</div></div>'
     +'<div style="background:#fff;border:1px solid #e2e6ed;border-radius:10px;padding:12px 16px;margin-bottom:16px;display:flex;flex-wrap:wrap;gap:10px;align-items:center">'
-    +'<select onchange="_bkFilter.client=this.value;render()" style="padding:7px 10px;border:1.5px solid #e2e6ed;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer"><option value="">All Clients</option>'+['Codyoung','Codingal','Turito','Vedantu','JustTutor','Flyingstars','Connect2Learn'].map(c=>'<option value="'+c+'" '+(_bkFilter.client===c?'selected':'')+'>'+c+'</option>').join('')+'</select>'
+    +'<select onchange="_bkFilter.client=this.value;render()" style="padding:7px 10px;border:1.5px solid #e2e6ed;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer"><option value="">All Clients</option>'+['Codyoung','Codingal','Turito','Vedantu','JustTutor','Flyingstars','Connect2Learn','Galaxino'].map(c=>'<option value="'+c+'" '+(_bkFilter.client===c?'selected':'')+'>'+c+'</option>').join('')+'</select>'
     +'<select onchange="_bkFilter.status=this.value;render()" style="padding:7px 10px;border:1.5px solid #e2e6ed;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer"><option value="">All Statuses</option>'+BK_STATUSES.map(s=>'<option value="'+s+'" '+(_bkFilter.status===s?'selected':'')+'>'+s+'</option>').join('')+'</select>'
     +'<select onchange="_bkFilter.country=this.value;render()" style="padding:7px 10px;border:1.5px solid #e2e6ed;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer"><option value="">All Countries</option>'+['USA','United Kingdom','Australia','India','Canada'].map(c=>'<option value="'+c+'" '+(_bkFilter.country===c?'selected':'')+'>'+c+'</option>').join('')+'</select>'
     +(sa?'<select onchange="_bkFilter.agent=this.value;render()" style="padding:7px 10px;border:1.5px solid #e2e6ed;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer"><option value="">All Agents</option>'+agentOpts+'</select>':'')
@@ -7048,7 +7048,7 @@ function renderAgentBookingsView(){
   const BK_MONTHS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   const bkFD=ds=>{if(!ds||ds==='—')return'—';const p=ds.split('-');if(p.length!==3)return ds;return parseInt(p[2])+'-'+BK_MONTHS[parseInt(p[1])-1]+'-'+p[0];};
   const bkAP=t=>{if(!t)return'';const[hh,mm]=t.split(':').map(Number);return(hh%12||12)+':'+String(mm).padStart(2,'0')+' '+(hh>=12?'PM':'AM');};
-  const CC={Flyingstars:{col:'#C0392B',bg:'#fdecea'},Codyoung:{col:'#d4820a',bg:'#fef5e7'},Codingal:{col:'#2471a3',bg:'#ebf5fb'},'Connect2Learn':{col:'#1e8449',bg:'#eafaf1'},Turito:{col:'#C97F00',bg:'#FEF5E4'},'Vedantu':{col:'#1F618D',bg:'#EBF2FA'},'JustTutor':{col:'#8E44AD',bg:'#F4ECF7'},'Edvantedge':{col:'#16A085',bg:'#E8F8F5'}};
+  const CC={Flyingstars:{col:'#C0392B',bg:'#fdecea'},Codyoung:{col:'#d4820a',bg:'#fef5e7'},Codingal:{col:'#2471a3',bg:'#ebf5fb'},'Connect2Learn':{col:'#1e8449',bg:'#eafaf1'},Turito:{col:'#C97F00',bg:'#FEF5E4'},'Vedantu':{col:'#1F618D',bg:'#EBF2FA'},'JustTutor':{col:'#8E44AD',bg:'#F4ECF7'},'Galaxino':{col:'#E67E22',bg:'#FDF2E9'},'Edvantedge':{col:'#16A085',bg:'#E8F8F5'}};
 
   // Status counts — must come from period-filtered set so MTD/Today/Week reflect correctly
   // We compute these AFTER building filtered (below), but we need them for the stat cards.
@@ -7156,7 +7156,7 @@ function renderAgentBookingsView(){
   for(let d=1;d<=dim;d++){
     const ds=calY+'-'+String(calM+1).padStart(2,'0')+'-'+String(d).padStart(2,'0');
     const isT=ds===todayStr;const e=calMap[ds];
-    let cnt='';if(e){const badgeCol={Codyoung:'#00956E',Codingal:'#2471a3',Turito:'#C97F00','Vedantu':'#1F618D','JustTutor':'#8E44AD','Edvantedge':'#16A085'};const badgeBg={Codyoung:'#E6F7F1',Codingal:'#ebf5fb',Turito:'#FEF5E4','Vedantu':'#EBF2FA','JustTutor':'#F4ECF7','Edvantedge':'#E8F8F5'};const badgeTag={Codyoung:'CY',Codingal:'CGL',Turito:'TR','Vedantu':'VU','JustTutor':'JT','Edvantedge':'EE'};DD_CLIENTS_NOW.forEach(cl=>{if(e[cl]>0)cnt+='<div style="font-size:10px;font-weight:700;color:'+(isT?'#fff':badgeCol[cl])+';background:'+(isT?'rgba(255,255,255,.25)':badgeBg[cl])+';border-radius:3px;padding:1px 4px;margin-top:2px">'+badgeTag[cl]+':'+e[cl]+'</div>';});}
+    let cnt='';if(e){const badgeCol={Codyoung:'#00956E',Codingal:'#2471a3',Turito:'#C97F00','Vedantu':'#1F618D','JustTutor':'#8E44AD','Edvantedge':'#16A085','Galaxino':'#E67E22'};const badgeBg={Codyoung:'#E6F7F1',Codingal:'#ebf5fb',Turito:'#FEF5E4','Vedantu':'#EBF2FA','JustTutor':'#F4ECF7','Edvantedge':'#E8F8F5','Galaxino':'#FDF2E9'};const badgeTag={Codyoung:'CY',Codingal:'CGL',Turito:'TR','Vedantu':'VU','JustTutor':'JT','Edvantedge':'EE','Galaxino':'GX'};DD_CLIENTS_NOW.forEach(cl=>{if(e[cl]>0)cnt+='<div style="font-size:10px;font-weight:700;color:'+(isT?'#fff':badgeCol[cl])+';background:'+(isT?'rgba(255,255,255,.25)':badgeBg[cl])+';border-radius:3px;padding:1px 4px;margin-top:2px">'+badgeTag[cl]+':'+e[cl]+'</div>';});}
     calH+='<div onclick="S.bkFilter={...(S.bkFilter||{}),demoDate:\''+ds+'\'};S.bkPage=0;render()" style="min-height:52px;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;padding:6px 2px;cursor:pointer;font-size:13px;font-weight:600;color:'+(isT?'#fff':'#1a2535')+';background:'+(isT?'#C0392B':'#fff')+';border-right:1px solid #e2e6ed;border-bottom:1px solid #e2e6ed;" onmouseover="if(this.style.background!==\'rgb(192, 57, 43)\')this.style.background=\'#f5f6fa\'" onmouseout="if(this.style.background!==\'rgb(192, 57, 43)\')this.style.background=\'#fff\'">'
       +'<div style="font-size:13px;font-weight:700;line-height:1">'+d+'</div>'
       +(cnt?'<div style="display:flex;flex-direction:column;align-items:center;width:100%">'+cnt+'</div>':'')
@@ -7233,7 +7233,7 @@ function renderAgentBookingsView(){
   let _cardClients;
   if(_isAllTime){
     // All unique clients that have any bookings in the DB, sorted by first appearance
-    const _allOrder=['Connect2Learn','Flyingstars','Codyoung','Codingal','Turito','Edvantedge','Vedantu','JustTutor'];
+    const _allOrder=['Connect2Learn','Flyingstars','Codyoung','Codingal','Turito','Edvantedge','Vedantu','JustTutor','Galaxino'];
     // Junk/invalid client names to always exclude
     const _junkClients=new Set(['https://www.example.com','EdvantEdge','example.com']);
     const _seenInDB=new Set(bks.map(b=>b.client).filter(c=>c&&!_junkClients.has(c)&&!c.startsWith('http')));
@@ -7329,7 +7329,7 @@ function renderAgentBookingsView(){
   +'</div>'
 
   // DD Date filter
-  +((['Codingal','Turito','Vedantu','JustTutor','Edvantedge','Connect2Learn'].includes(bf.client)||bf.demoDate)?
+  +((['Codingal','Turito','Vedantu','JustTutor','Edvantedge','Connect2Learn','Galaxino'].includes(bf.client)||bf.demoDate)?
     '<div style="padding:6px 14px 8px;background:#fafbfc;border-bottom:1px solid #e2e6ed;display:flex;align-items:center;gap:8px">'
     +'<label style="font-size:10px;color:#8a9ab0;white-space:nowrap">Demo Date (Customer):</label>'
     +'<input type="date" value="'+(bf.demoDate||'')+'" onchange="S.bkFilter={...(S.bkFilter||{}),demoDate:this.value};render()" style="border:1px solid #e2e6ed;border-radius:5px;padding:4px 8px;font-size:11px;outline:none">'
@@ -7437,7 +7437,7 @@ function renderAgentBookingsView(){
   // Section 01 - Client
   +'<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.7px;color:#8a9ab0;padding:10px 0 9px;border-bottom:1px solid #e2e6ed;margin-bottom:12px;display:flex;align-items:center;gap:6px"><span style="background:#1a2535;color:#fff;border-radius:4px;padding:1px 6px;font-size:10px">01</span> Select Client</div>'
   +'<div style="display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-bottom:14px" id="bkClientPicker">'
-  +['Codyoung','Codingal','Turito','Vedantu','JustTutor','Edvantedge'].map((cl,i)=>{const cfg=CC[cl];const ico=['🔵','🟡','🟠','🟣','🟪','🟢'][i];const model=cl==='Codyoung'?'DS Campaign':'DD Campaign';return '<div id="bkPick-'+cl.replace(/\s/g,'_')+'" onclick="bkPickCl(\''+cl+'\')" style="padding:9px 10px;border-radius:6px;border:2px solid #e2e6ed;background:#fff;cursor:pointer;text-align:center;transition:all .12px"><div style="font-size:11px;font-weight:600;color:#1a2535">'+ico+' '+cl+'</div><div style="font-size:10px;color:#8a9ab0;margin-top:2px">'+model+'</div></div>';}).join('')
+  +['Codyoung','Codingal','Turito','Vedantu','JustTutor','Edvantedge','Galaxino'].map((cl,i)=>{const cfg=CC[cl];const ico=['🔵','🟡','🟠','🟣','🟪','🟢','🟧'][i];const model=cl==='Codyoung'?'DS Campaign':'DD Campaign';return '<div id="bkPick-'+cl.replace(/\s/g,'_')+'" onclick="bkPickCl(\''+cl+'\')" style="padding:9px 10px;border-radius:6px;border:2px solid #e2e6ed;background:#fff;cursor:pointer;text-align:center;transition:all .12px"><div style="font-size:11px;font-weight:600;color:#1a2535">'+ico+' '+cl+'</div><div style="font-size:10px;color:#8a9ab0;margin-top:2px">'+model+'</div></div>';}).join('')
   +'</div>'
   // Section 02 - Lead Info
   +'<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.7px;color:#8a9ab0;padding:10px 0 9px;border-bottom:1px solid #e2e6ed;margin-bottom:12px;display:flex;align-items:center;gap:6px"><span style="background:#1a2535;color:#fff;border-radius:4px;padding:1px 6px;font-size:10px">02</span> Lead Information</div>'
@@ -7635,7 +7635,7 @@ async function bkUpdateOutcome(id, status){
     const b=_bkBookings.find(x=>x.id==id);if(b)b.status=status;
     render();
     showToast('Status → '+status);
-    if(b && (b.client==='Turito'||b.client==='Vedantu'||b.client==='JustTutor')){
+    if(b && (b.client==='Turito'||b.client==='Vedantu'||b.client==='JustTutor'||b.client==='Galaxino')){
       pushToTuritoIfNeeded({...b, status}, b.phone_code);
     }
     // "Client Form Not Filled" / "Client Duplicate" are Admin-only calls that
@@ -7692,7 +7692,7 @@ function bkDDReminders(){
   const tod=new Date().toISOString().slice(0,10);
   const tmr=new Date(Date.now()+86400000).toISOString().slice(0,10);
   const filtered=bks.filter(b=>{
-    if(!['Codingal','Turito','Vedantu','JustTutor','Edvantedge'].includes(b.client)) return false;
+    if(!['Codingal','Turito','Vedantu','JustTutor','Edvantedge','Galaxino'].includes(b.client)) return false;
     // Demo Scheduled or Rescheduled — demo_date holds the (new) scheduled date in both cases
     if((b.status==='Demo Scheduled'||b.status==='Rescheduled') && b.demo_date && (b.demo_date===tod||b.demo_date===tmr)) return true;
     return false;
@@ -8383,7 +8383,7 @@ function bkRsIST(){
 let bkSelectedClient=null;
 function bkPickCl(name){
   bkSelectedClient=name;
-  const CC2={Flyingstars:{col:'#C0392B',bg:'#fdecea'},Codyoung:{col:'#d4820a',bg:'#fef5e7'},Codingal:{col:'#2471a3',bg:'#ebf5fb'},'Connect2Learn':{col:'#1e8449',bg:'#eafaf1'},Turito:{col:'#C97F00',bg:'#FEF5E4'},'Vedantu':{col:'#1F618D',bg:'#EBF2FA'},'JustTutor':{col:'#8E44AD',bg:'#F4ECF7'},'Edvantedge':{col:'#16A085',bg:'#E8F8F5'}};
+  const CC2={Flyingstars:{col:'#C0392B',bg:'#fdecea'},Codyoung:{col:'#d4820a',bg:'#fef5e7'},Codingal:{col:'#2471a3',bg:'#ebf5fb'},'Connect2Learn':{col:'#1e8449',bg:'#eafaf1'},Turito:{col:'#C97F00',bg:'#FEF5E4'},'Vedantu':{col:'#1F618D',bg:'#EBF2FA'},'JustTutor':{col:'#8E44AD',bg:'#F4ECF7'},'Galaxino':{col:'#E67E22',bg:'#FDF2E9'},'Edvantedge':{col:'#16A085',bg:'#E8F8F5'}};
   const mp={Flyingstars:'Flyingstars',Codyoung:'Codyoung',Codingal:'Codingal','Connect2Learn':'Connect2Learn',Turito:'Turito','Vedantu':'Vedantu','Edvantedge':'Edvantedge'};
   Object.keys(mp).forEach(cl=>{
     const el=document.getElementById('bkPick-'+cl.replace(/\s/g,'_'));
@@ -8410,7 +8410,7 @@ function bkOpenAdd(){
   const dw=document.getElementById('bkDupWarn');if(dw)dw.style.display='none';
   const phEl=document.getElementById('bkf_ph');if(phEl)phEl.style.borderColor='';
   // Reset client picker
-  ['Codyoung','Codingal','Turito','Vedantu','JustTutor','Edvantedge'].forEach(cl=>{const el=document.getElementById('bkPick-'+cl.replace(/\s/g,'_'));if(el){el.style.border='2px solid #e2e6ed';el.style.background='#fff';}});
+  ['Codyoung','Codingal','Turito','Vedantu','JustTutor','Edvantedge','Galaxino'].forEach(cl=>{const el=document.getElementById('bkPick-'+cl.replace(/\s/g,'_'));if(el){el.style.border='2px solid #e2e6ed';el.style.background='#fff';}});
   const title=document.getElementById('bkAddTitle');if(title)title.textContent='Add Booking';
   const saveBtn=document.getElementById('bkAddSaveBtn');if(saveBtn)saveBtn.textContent='💾 Save Booking';
   S._bkEditId=null;
@@ -8829,7 +8829,7 @@ function bkInjectNotifPanel(){
   const fD=ds=>{if(!ds)return'—';const p=ds.split('-');if(p.length!==3)return ds;return parseInt(p[2])+'-'+MONTHS2[parseInt(p[1])-1]+'-'+p[0];};
   const tAP=t=>{if(!t)return'';const[hh,mm]=t.split(':').map(Number);return(hh%12||12)+':'+String(mm).padStart(2,'0')+' '+(hh>=12?'PM':'AM');};
   const rems=bkDDReminders();const tod=new Date().toISOString().slice(0,10);
-  const CC3={Codingal:{col:'#2471a3',bg:'#ebf5fb',ico:'⏰'},'Connect2Learn':{col:'#1e8449',bg:'#eafaf1',ico:'📅'},Turito:{col:'#C97F00',bg:'#FEF5E4',ico:'⏰'},'Vedantu':{col:'#1F618D',bg:'#EBF2FA',ico:'📅'},'JustTutor':{col:'#8E44AD',bg:'#F4ECF7',ico:'📅'},'Edvantedge':{col:'#16A085',bg:'#E8F8F5',ico:'⏰'}};
+  const CC3={Codingal:{col:'#2471a3',bg:'#ebf5fb',ico:'⏰'},'Connect2Learn':{col:'#1e8449',bg:'#eafaf1',ico:'📅'},Turito:{col:'#C97F00',bg:'#FEF5E4',ico:'⏰'},'Vedantu':{col:'#1F618D',bg:'#EBF2FA',ico:'📅'},'JustTutor':{col:'#8E44AD',bg:'#F4ECF7',ico:'📅'},'Edvantedge':{col:'#16A085',bg:'#E8F8F5',ico:'⏰'},'Galaxino':{col:'#E67E22',bg:'#FDF2E9',ico:'📅'}};
   const getC=b=>b.client_booked?.trim()||(b.comments||'').match(/\[Client:\s*([^\]]+)\]/i)?.[1]?.trim()||'';
   const panel=document.createElement('div');
   panel.id='bkNotifPanel';
@@ -10701,7 +10701,7 @@ function crRender(){
   var hourlyHTML=allPills.length?'<div class="cr-hourly-flow">'+allPills.join('')+'</div>':'<div style="color:var(--text3);font-size:12px">No D-Day demos for this date.</div>';
 
   // ── CLIENT COLOUR MAP ──────────────────────────────────────────────────
-  var CL_COL={Codyoung:'#d4820a',Codingal:'#2471a3',Turito:'#C97F00',Vedantu:'#1F618D',JustTutor:'#8E44AD',Edvantedge:'#16A085'};
+  var CL_COL={Codyoung:'#d4820a',Codingal:'#2471a3',Turito:'#C97F00',Vedantu:'#1F618D',JustTutor:'#8E44AD',Edvantedge:'#16A085',Galaxino:'#E67E22'};
   function clColor(c){return CL_COL[c]||'#555';}
   function clBg(c){var h=clColor(c);return h+'18';}
 
@@ -10709,7 +10709,7 @@ function crRender(){
   // Fixed 4 active clients only
   // Use the historically-correct client list for the Closing Report date
   var _crMonthKey=(date||'').slice(0,7);
-  var dsClients=typeof getClientsForMonth==='function'?getClientsForMonth(_crMonthKey):['Codyoung','Codingal','Turito','Vedantu','JustTutor','Edvantedge'];
+  var dsClients=typeof getClientsForMonth==='function'?getClientsForMonth(_crMonthKey):['Codyoung','Codingal','Turito','Vedantu','JustTutor','Edvantedge','Galaxino'];
   // Build agent→client count
   var dsCliMap={};
   sorted.forEach(function(ag){dsCliMap[ag]={};dsClients.forEach(function(c){dsCliMap[ag][c]=0;});});
@@ -10729,7 +10729,7 @@ function crRender(){
 
   // ── DEMO DONE CLIENT PIVOT (Agent × Client) ────────────────────────────
   // ddayRows already excludes Codyoung
-  var ddClients=['Codyoung','Codingal','Turito','Vedantu','JustTutor','Edvantedge'];
+  var ddClients=['Codyoung','Codingal','Turito','Vedantu','JustTutor','Edvantedge','Galaxino'];
   var ddCliMap={};
   sorted.forEach(function(ag){ddCliMap[ag]={};ddClients.forEach(function(c){ddCliMap[ag][c]=0;});});
   ddayRows.filter(crIsDone).forEach(function(b){var ag=b.agent||'?',cl=b.client||'?';if(!ddCliMap[ag])ddCliMap[ag]={};ddCliMap[ag][cl]=(ddCliMap[ag][cl]||0)+1;});
@@ -10753,15 +10753,15 @@ function crRender(){
 
   // ── ONE UNIFIED TABLE ─────────────────────────────────────────────────
   // Columns: Agent | DS Total | DS:Codyoung | DS:Codingal | DS:Turito | DS:Vedantu | D-Day | Done | Conv%
-  var CLIENTS=['Codyoung','Codingal','Turito','Vedantu','JustTutor','Edvantedge'];
+  var CLIENTS=['Codyoung','Codingal','Turito','Vedantu','JustTutor','Edvantedge','Galaxino'];
 
   // Build unified per-agent data (DS + D-Day both with client breakdown)
   var uMap={};
   sorted.forEach(function(ag){
-    uMap[ag]={dsTotal:0,dsCY:0,dsCO:0,dsTU:0,dsVE:0,dsJT:0,dsEV:0,dday:0,ddCY:0,ddCO:0,ddTU:0,ddVE:0,ddJT:0,ddEV:0,done:0};
+    uMap[ag]={dsTotal:0,dsCY:0,dsCO:0,dsTU:0,dsVE:0,dsJT:0,dsEV:0,dsGX:0,dday:0,ddCY:0,ddCO:0,ddTU:0,ddVE:0,ddJT:0,ddEV:0,ddGX:0,done:0};
   });
   dsRows.forEach(function(b){
-    var ag=b.agent||'?'; if(!uMap[ag])uMap[ag]={dsTotal:0,dsCY:0,dsCO:0,dsTU:0,dsVE:0,dsJT:0,dsEV:0,dday:0,ddCY:0,ddCO:0,ddTU:0,ddVE:0,ddJT:0,ddEV:0,done:0};
+    var ag=b.agent||'?'; if(!uMap[ag])uMap[ag]={dsTotal:0,dsCY:0,dsCO:0,dsTU:0,dsVE:0,dsJT:0,dsEV:0,dsGX:0,dday:0,ddCY:0,ddCO:0,ddTU:0,ddVE:0,ddJT:0,ddEV:0,ddGX:0,done:0};
     uMap[ag].dsTotal++;
     var cl=b.client||'';
     if(cl==='Codyoung')uMap[ag].dsCY++;
@@ -10770,9 +10770,10 @@ function crRender(){
     else if(cl==='Vedantu')uMap[ag].dsVE++;
     else if(cl==='JustTutor')uMap[ag].dsJT++;
     else if(cl==='Edvantedge')uMap[ag].dsEV++;
+    else if(cl==='Galaxino')uMap[ag].dsGX++;
   });
   ddayRows.forEach(function(b){
-    var ag=b.agent||'?'; if(!uMap[ag])uMap[ag]={dsTotal:0,dsCY:0,dsCO:0,dsTU:0,dsVE:0,dsJT:0,dsEV:0,dday:0,ddCY:0,ddCO:0,ddTU:0,ddVE:0,ddJT:0,ddEV:0,done:0};
+    var ag=b.agent||'?'; if(!uMap[ag])uMap[ag]={dsTotal:0,dsCY:0,dsCO:0,dsTU:0,dsVE:0,dsJT:0,dsEV:0,dsGX:0,dday:0,ddCY:0,ddCO:0,ddTU:0,ddVE:0,ddJT:0,ddEV:0,ddGX:0,done:0};
     uMap[ag].dday++;
     var cl=b.client||'';
     if(cl==='Codyoung')uMap[ag].ddCY++;
@@ -10781,6 +10782,7 @@ function crRender(){
     else if(cl==='Vedantu')uMap[ag].ddVE++;
     else if(cl==='JustTutor')uMap[ag].ddJT++;
     else if(cl==='Edvantedge')uMap[ag].ddEV++;
+    else if(cl==='Galaxino')uMap[ag].ddGX++;
     if(crIsDone(b))uMap[ag].done++;
   });
 
@@ -10792,6 +10794,7 @@ function crRender(){
   var tVE=dsRows.filter(function(b){return(b.client||'')==='Vedantu';}).length;
   var tJT=dsRows.filter(function(b){return(b.client||'')==='JustTutor';}).length;
   var tEV=dsRows.filter(function(b){return(b.client||'')==='Edvantedge';}).length;
+  var tGX=dsRows.filter(function(b){return(b.client||'')==='Galaxino';}).length;
   var tDday=ddayRows.length, tDone=ddayRows.filter(crIsDone).length;
   var tdCY=ddayRows.filter(function(b){return(b.client||'')==='Codyoung';}).length;
   var tdCO=ddayRows.filter(function(b){return(b.client||'')==='Codingal';}).length;
@@ -10799,6 +10802,7 @@ function crRender(){
   var tdVE=ddayRows.filter(function(b){return(b.client||'')==='Vedantu';}).length;
   var tdJT=ddayRows.filter(function(b){return(b.client||'')==='JustTutor';}).length;
   var tdEV=ddayRows.filter(function(b){return(b.client||'')==='Edvantedge';}).length;
+  var tdGX=ddayRows.filter(function(b){return(b.client||'')==='Galaxino';}).length;
   var tCp=crConv(tDone,tDday);
 
   function uCell(v,col){return v?'<span style="background:'+clBg(col)+';color:'+clColor(col)+';font-weight:800;padding:2px 9px;border-radius:8px;font-size:11px">'+v+'</span>':'<span style="color:#ddd">—</span>';}
@@ -10841,7 +10845,7 @@ function crRender(){
   }
 
   var uRows=sorted.map(function(ag){
-    var d=uMap[ag]||{dsTotal:0,dsCY:0,dsCO:0,dsTU:0,dsVE:0,dsJT:0,dsEV:0,dday:0,ddCY:0,ddCO:0,ddTU:0,ddVE:0,ddJT:0,ddEV:0,done:0};
+    var d=uMap[ag]||{dsTotal:0,dsCY:0,dsCO:0,dsTU:0,dsVE:0,dsJT:0,dsEV:0,dsGX:0,dday:0,ddCY:0,ddCO:0,ddTU:0,ddVE:0,ddJT:0,ddEV:0,ddGX:0,done:0};
     var cp=crConv(d.done,d.dday);
     var fade=d.dsTotal===0&&d.dday===0?'opacity:.38':'';
     return '<tr style="'+fade+'">'
@@ -10852,14 +10856,16 @@ function crRender(){
       +'<td>'+uCell(d.dsTU,'#C97F00')+'</td>'
       +'<td>'+uCell(d.dsVE,'#1F618D')+'</td>'
       +'<td>'+uCell(d.dsJT,'#8E44AD')+'</td>'
-      +'<td style="border-right:2px solid #e8edf5">'+uCell(d.dsEV,'#16A085')+'</td>'
+      +'<td>'+uCell(d.dsEV,'#16A085')+'</td>'
+      +'<td style="border-right:2px solid #e8edf5">'+uCell(d.dsGX,'#E67E22')+'</td>'
       +'<td>'+numCell(d.dday,'#1a2535')+agCtryHtml(ag,'dd')+'</td>'
       +'<td>'+uCell(d.ddCY,'#d4820a')+'</td>'
       +'<td>'+uCell(d.ddCO,'#2471a3')+'</td>'
       +'<td>'+uCell(d.ddTU,'#C97F00')+'</td>'
       +'<td>'+uCell(d.ddVE,'#1F618D')+'</td>'
       +'<td>'+uCell(d.ddJT,'#8E44AD')+'</td>'
-      +'<td style="border-right:2px solid #e8edf5">'+uCell(d.ddEV,'#16A085')+'</td>'
+      +'<td>'+uCell(d.ddEV,'#16A085')+'</td>'
+      +'<td style="border-right:2px solid #e8edf5">'+uCell(d.ddGX,'#E67E22')+'</td>'
       +'<td>'+numCell(d.done,'#1a8a5a')+'</td>'
       +'<td><span class="'+crConvCls(cp)+'">'+(d.dday?cp+'%':'—')+'</span></td>'
       +'</tr>';
@@ -10873,14 +10879,16 @@ function crRender(){
     +'<td>'+(tTU||'—')+'</td>'
     +'<td>'+(tVE||'—')+'</td>'
     +'<td>'+(tJT||'—')+'</td>'
-    +'<td style="border-right:2px solid rgba(0,0,0,.08)">'+(tEV||'—')+'</td>'
+    +'<td>'+(tEV||'—')+'</td>'
+    +'<td style="border-right:2px solid rgba(0,0,0,.08)">'+(tGX||'—')+'</td>'
     +'<td>'+(tDday||'—')+'</td>'
     +'<td>'+(tdCY||'—')+'</td>'
     +'<td>'+(tdCO||'—')+'</td>'
     +'<td>'+(tdTU||'—')+'</td>'
     +'<td>'+(tdVE||'—')+'</td>'
     +'<td>'+(tdJT||'—')+'</td>'
-    +'<td style="border-right:2px solid rgba(0,0,0,.08)">'+(tdEV||'—')+'</td>'
+    +'<td>'+(tdEV||'—')+'</td>'
+    +'<td style="border-right:2px solid rgba(0,0,0,.08)">'+(tdGX||'—')+'</td>'
     +'<td>'+(tDone||'—')+'</td>'
     +'<td><span class="'+crConvCls(tCp)+'">'+(tDday?tCp+'%':'—')+'</span></td>'
     +'</tr>';
@@ -10924,7 +10932,7 @@ function crRender(){
 
   // ── CLIENT-WISE BREAKDOWN ─────────────────────────────────────────────
   var cliMap={};
-  var cliList=['Codyoung','Codingal','Turito','Vedantu','JustTutor','Edvantedge'];
+  var cliList=['Codyoung','Codingal','Turito','Vedantu','JustTutor','Edvantedge','Galaxino'];
   dsRows.forEach(function(b){var c=b.client||'Other';if(!cliMap[c])cliMap[c]={ds:0,dday:0,done:0};cliMap[c].ds++;});
   ddayRows.forEach(function(b){var c=b.client||'Other';if(!cliMap[c])cliMap[c]={ds:0,dday:0,done:0};cliMap[c].dday++;if(crIsDone(b))cliMap[c].done++;});
   var cliRows=Object.keys(cliMap).sort().map(function(c){
@@ -10976,8 +10984,8 @@ function crRender(){
     contentHtml='<div style="overflow-x:auto"><table class="cr-ptbl"><thead>'
       +'<tr style="background:#0f1f3d;color:#fff">'
       +'<th rowspan="2" style="text-align:left;padding-left:18px;min-width:90px">Agent</th>'
-      +'<th colspan="7" style="border-bottom:1px solid #1a3160;border-right:2px solid #1a3160">📅 Demo Scheduled (DS)</th>'
-      +'<th colspan="9">🎯 D-Day</th>'
+      +'<th colspan="8" style="border-bottom:1px solid #1a3160;border-right:2px solid #1a3160">📅 Demo Scheduled (DS)</th>'
+      +'<th colspan="10">🎯 D-Day</th>'
       +'</tr>'
       +'<tr style="background:#0d1e3a;color:#fff">'
       +'<th style="color:#f5c518">Total</th>'
@@ -10986,14 +10994,16 @@ function crRender(){
       +'<th style="color:#C97F00">Turito</th>'
       +'<th style="color:#6fa8dc">Vedantu</th>'
       +'<th style="color:#C39BD3">JustTutor</th>'
-      +'<th style="color:#4ECDC4;border-right:2px solid #e8edf5">Edvantedge</th>'
+      +'<th style="color:#4ECDC4">Edvantedge</th>'
+      +'<th style="color:#E67E22;border-right:2px solid #e8edf5">Galaxino</th>'
       +'<th>Total</th>'
       +'<th style="color:#d4820a">Codyoung</th>'
       +'<th style="color:#5ba3d9">Codingal</th>'
       +'<th style="color:#C97F00">Turito</th>'
       +'<th style="color:#6fa8dc">Vedantu</th>'
       +'<th style="color:#C39BD3">JustTutor</th>'
-      +'<th style="color:#4ECDC4;border-right:2px solid #e8edf5">Edvantedge</th>'
+      +'<th style="color:#4ECDC4">Edvantedge</th>'
+      +'<th style="color:#E67E22;border-right:2px solid #e8edf5">Galaxino</th>'
       +'<th style="color:#7ecfbd">Done ✅</th>'
       +'<th style="color:#f5c518">Conv %</th>'
       +'</tr>'
@@ -11608,7 +11618,7 @@ function renderLeadDetail(l){
       // Show client badge in center when lead has a client (Bookings view)
       const clientName=l.client_booked?.trim()||(l.comments||'').match(/\[Client:\s*([^\]]+)\]/i)?.[1]?.trim()||'';
       if(!clientName) return '';
-      const CC2={'Flyingstars':'#00956E','Codyoung':'#1A6FB3','Codingal':'#C97F00','Connect2Learn':'#7D3C98','Turito':'#D4820A','Vedantu':'#1F618D','JustTutor':'#8E44AD','Edvantedge':'#16A085'};
+      const CC2={'Flyingstars':'#00956E','Codyoung':'#1A6FB3','Codingal':'#C97F00','Connect2Learn':'#7D3C98','Turito':'#D4820A','Vedantu':'#1F618D','JustTutor':'#8E44AD','Edvantedge':'#16A085','Galaxino':'#E67E22'};
       const cc2=CC2[clientName]||'#6B7280';
       return `<div style="text-align:center;padding:10px 0 4px;border-top:1px solid var(--border);margin-top:8px">
         <div style="font-size:10px;font-weight:700;color:#9CA3AF;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Client</div>
@@ -12729,7 +12739,7 @@ const sbTurito=supabase.createClient(TURITO_URL,TURITO_KEY);
 async function pushToTuritoIfNeeded(rec, phoneCode){
   // Turito, Vedantu, and EdvantEdge share one isolated portal project, kept
   // apart by the `client` tag plus row-level security on that side.
-  const PORTAL_CLIENTS = ['Turito','Vedantu','JustTutor','Edvantedge'];
+  const PORTAL_CLIENTS = ['Turito','Vedantu','JustTutor','Edvantedge','Galaxino'];
   if(!PORTAL_CLIENTS.includes(rec.client)) return;
   try{
     await sbTurito.rpc('ingest_booking', {
@@ -12764,7 +12774,7 @@ async function pushToTuritoIfNeeded(rec, phoneCode){
 // source_id + client so one client's delete can never touch another's row.
 // Failure is non-fatal: the CRM delete has already happened.
 async function deleteFromPortalIfNeeded(rec){
-  const PORTAL_CLIENTS = ['Turito','Vedantu','JustTutor','Edvantedge'];
+  const PORTAL_CLIENTS = ['Turito','Vedantu','JustTutor','Edvantedge','Galaxino'];
   if(!rec || !PORTAL_CLIENTS.includes(rec.client)) return;
   const src = rec.phone_code || rec.source_id;
   if(!src) return;
@@ -12967,62 +12977,62 @@ const PERF_AGENT_CFG_BY_MONTH = {
     SHAHID:{ds:['Flyingstars','Codyoung'],dd:['Codingal','Connect2Learn']},
   },
   '2026-07': {
-    GALVIN:{ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge']},
-    AQSA:  {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge']},
-    CHITRA:{ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge']},
-    HAJIRA:{ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge']},
-    KAFIL: {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge']},
-    SHAHID:{ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge']},
-    EKTA:  {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge']},
-    HENA:  {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge']},
-    FAIZ:  {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge']},
+    GALVIN:{ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge','Galaxino']},
+    AQSA:  {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge','Galaxino']},
+    CHITRA:{ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge','Galaxino']},
+    HAJIRA:{ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge','Galaxino']},
+    KAFIL: {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge','Galaxino']},
+    SHAHID:{ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge','Galaxino']},
+    EKTA:  {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge','Galaxino']},
+    HENA:  {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge','Galaxino']},
+    FAIZ:  {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge','Galaxino']},
   },
   '2026-08': {
-    GALVIN:{ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge']},
-    AQSA:  {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge']},
-    CHITRA:{ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge']},
-    HAJIRA:{ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge']},
-    KAFIL: {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge']},
-    SHAHID:{ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge']},
-    EKTA:  {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge']},
-    HENA:  {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge']},
-    FAIZ:  {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge']},
+    GALVIN:{ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge','Galaxino']},
+    AQSA:  {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge','Galaxino']},
+    CHITRA:{ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge','Galaxino']},
+    HAJIRA:{ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge','Galaxino']},
+    KAFIL: {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge','Galaxino']},
+    SHAHID:{ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge','Galaxino']},
+    EKTA:  {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge','Galaxino']},
+    HENA:  {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge','Galaxino']},
+    FAIZ:  {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge','Galaxino']},
   },
   '2026-09': {
-    GALVIN: {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge']},
-    CHITRA: {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge']},
-    HAJIRA: {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge']},
-    SHAHID: {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge']},
-    EKTA:   {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge']},
-    HENA:   {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge']},
-    FAIZ:   {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge']},
-    CLARA:   {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge']},
-    FARDEEN: {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge']},
-    RUHI:    {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge']},
+    GALVIN: {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge','Galaxino']},
+    CHITRA: {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge','Galaxino']},
+    HAJIRA: {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge','Galaxino']},
+    SHAHID: {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge','Galaxino']},
+    EKTA:   {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge','Galaxino']},
+    HENA:   {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge','Galaxino']},
+    FAIZ:   {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge','Galaxino']},
+    CLARA:   {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge','Galaxino']},
+    FARDEEN: {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge','Galaxino']},
+    RUHI:    {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge','Galaxino']},
   },
   '2026-10': {
-    GALVIN: {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge']},
-    HEENA:  {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge']},
-    EKTA:   {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge']},
-    MARY:   {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge']},
-    NEEDA:  {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge']},
-    AHIMA:  {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge']},
-    EVA:    {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge']},
-    SHAHID: {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge']},
-    HAJIRA: {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge']},
-    CLARA:  {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge']},
+    GALVIN: {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge','Galaxino']},
+    HEENA:  {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge','Galaxino']},
+    EKTA:   {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge','Galaxino']},
+    MARY:   {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge','Galaxino']},
+    NEEDA:  {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge','Galaxino']},
+    AHIMA:  {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge','Galaxino']},
+    EVA:    {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge','Galaxino']},
+    SHAHID: {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge','Galaxino']},
+    HAJIRA: {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge','Galaxino']},
+    CLARA:  {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge','Galaxino']},
   },
   '2026-11': {
-    GALVIN: {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge']},
-    HEENA:  {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge']},
-    EKTA:   {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge']},
-    MARY:   {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge']},
-    NEEDA:  {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge']},
-    AHIMA:  {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge']},
-    EVA:    {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge']},
-    SHAHID: {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge']},
-    HAJIRA: {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge']},
-    CLARA:  {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge']},
+    GALVIN: {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge','Galaxino']},
+    HEENA:  {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge','Galaxino']},
+    EKTA:   {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge','Galaxino']},
+    MARY:   {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge','Galaxino']},
+    NEEDA:  {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge','Galaxino']},
+    AHIMA:  {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge','Galaxino']},
+    EVA:    {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge','Galaxino']},
+    SHAHID: {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge','Galaxino']},
+    HAJIRA: {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge','Galaxino']},
+    CLARA:  {ds:['Codyoung'],dd:['Codingal','Turito','Vedantu','JustTutor','Edvantedge','Galaxino']},
   },
 };
 // Falls back to the most recently defined month's roster (not a hardcoded old
@@ -13092,7 +13102,7 @@ const CLIENT_CFG_DASH_BY_MONTH = {
   '2026-07': [{n:'Codyoung',t:'DS',color:'#00956E'},{n:'Codingal',t:'DD',color:'#7D3C98'},{n:'Turito',t:'DD',color:'#C97F00'},{n:'Vedantu',t:'DD',color:'#1F618D'},{n:'Edvantedge',t:'DD',color:'#16A085'}],
   '2026-09': [{n:'Codyoung',t:'DS',color:'#00956E'},{n:'Codingal',t:'DD',color:'#7D3C98'},{n:'Turito',t:'DD',color:'#C97F00'},{n:'Vedantu',t:'DD',color:'#1F618D'},{n:'JustTutor',t:'DD',color:'#8E44AD'},{n:'Edvantedge',t:'DD',color:'#16A085'}],
   '2026-10': [{n:'Codyoung',t:'DS',color:'#00956E'},{n:'Codingal',t:'DD',color:'#7D3C98'},{n:'Turito',t:'DD',color:'#C97F00'},{n:'Vedantu',t:'DD',color:'#1F618D'},{n:'JustTutor',t:'DD',color:'#8E44AD'},{n:'Edvantedge',t:'DD',color:'#16A085'}],
-  '2026-11': [{n:'Codyoung',t:'DS',color:'#00956E'},{n:'Codingal',t:'DD',color:'#7D3C98'},{n:'Turito',t:'DD',color:'#C97F00'},{n:'Vedantu',t:'DD',color:'#1F618D'},{n:'JustTutor',t:'DD',color:'#8E44AD'},{n:'Edvantedge',t:'DD',color:'#16A085'}],
+  '2026-11': [{n:'Codyoung',t:'DS',color:'#00956E'},{n:'Codingal',t:'DD',color:'#7D3C98'},{n:'Turito',t:'DD',color:'#C97F00'},{n:'Vedantu',t:'DD',color:'#1F618D'},{n:'JustTutor',t:'DD',color:'#8E44AD'},{n:'Edvantedge',t:'DD',color:'#16A085'},{n:'Galaxino',t:'DD',color:'#E67E22'}],
 };
 function getClientCfgDash(){ return CLIENT_CFG_DASH_BY_MONTH[PERF_MONTH]||CLIENT_CFG_DASH_BY_MONTH['2026-07']; }
 const CLIENT_CFG_DASH = new Proxy([],{get(_,k){ const a=getClientCfgDash(); return k==='length'?a.length:k in a?a[k]:a[k]; }});
@@ -13105,7 +13115,7 @@ const CLIENT_TARGETS_BY_MONTH = {
 };
 function getClientTargets(month){ 
   month = month||PERF_MONTH;
-  if(!CLIENT_TARGETS_BY_MONTH[month]) CLIENT_TARGETS_BY_MONTH[month]={Codyoung:0,Codingal:0,Turito:0,'Vedantu':0,'JustTutor':0,'Edvantedge':0};
+  if(!CLIENT_TARGETS_BY_MONTH[month]) CLIENT_TARGETS_BY_MONTH[month]={Codyoung:0,Codingal:0,Turito:0,'Vedantu':0,'JustTutor':0,'Edvantedge':0,'Galaxino':0};
   return CLIENT_TARGETS_BY_MONTH[month];
 }
 // Legacy proxy — reads/writes from active month's targets
@@ -13521,6 +13531,7 @@ function clientGrid(agent, client, showDS, showDD){
     'Vedantu':      {h:'#1F618D', bg:'#EBF2FA', border:'#2E86C1'},
     'JustTutor':    {h:'#8E44AD', bg:'#F4ECF7', border:'#AF7AC5'},
     'Edvantedge':   {h:'#16A085', bg:'#E8F8F5', border:'#1ABC9C'},
+    'Galaxino':     {h:'#E67E22', bg:'#FDF2E9', border:'#F0B27A'},
   };
   const c = colors[client]||{h:'#555',bg:'#F8F8F8',border:'#CCC'};
 
@@ -14350,7 +14361,7 @@ setInterval(()=>{ if(!document.hidden) loadMobilePerf(); },120000);
 // ════════════════════════════════════════════════════════════════
 
 const BOOKING_STATUSES = ['Pending','Demo Done','Rescheduled','No Show','Not Interested','Cancelled'];
-const BOOKING_CLIENTS  = ['Codyoung','Codingal','Turito','Vedantu','JustTutor','Edvantedge'];
+const BOOKING_CLIENTS  = ['Codyoung','Codingal','Turito','Vedantu','JustTutor','Edvantedge','Galaxino'];
 // Legacy clients kept for filters/edit-dropdowns so old bookings still render correctly
 const BOOKING_CLIENTS_LEGACY = ['Flyingstars','Connect2Learn','IND Codingal'];
 
@@ -15955,7 +15966,7 @@ async function dmFindLead(){
     const agentMap={};(S.users||[]).forEach(u=>agentMap[u.id]=u.name);
     el.innerHTML=data.map(l=>{
       const client=l.client_booked?.trim()||(l.comments||'').match(/\[Client:\s*([^\]]+)\]/i)?.[1]?.trim()||'—';
-      const cc={'Flyingstars':'#00956E','Codyoung':'#1A6FB3','Codingal':'#C97F00','Connect2Learn':'#7D3C98','Turito':'#D4820A','Vedantu':'#1F618D','JustTutor':'#8E44AD','Edvantedge':'#16A085'}[client]||'#6B7280';
+      const cc={'Flyingstars':'#00956E','Codyoung':'#1A6FB3','Codingal':'#C97F00','Connect2Learn':'#7D3C98','Turito':'#D4820A','Vedantu':'#1F618D','JustTutor':'#8E44AD','Edvantedge':'#16A085','Galaxino':'#E67E22'}[client]||'#6B7280';
       const agentName=agentMap[l.agent_id]||l.agent_id||'Unassigned';
       return`<div style="background:#F8FAFC;border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:10px">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid var(--border)">
