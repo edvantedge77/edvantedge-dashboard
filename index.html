@@ -341,6 +341,14 @@ tr:last-child td{border-bottom:none;}tr:hover td{background:#fafafa;cursor:point
   [style*="grid-template-columns:1.5fr 1fr 1fr 1fr"]>button{grid-column:1/-1;min-height:40px}
   [style*="grid-template-columns:1.5fr 1fr 1fr 1fr"] input[type="text"]{padding:4px 2px!important;font-size:16px!important}
   [style*="grid-template-columns:1.5fr 1fr 1fr 1fr"] select{font-size:14px!important}
+  /* ── Add/Edit Booking modal on phones: client cards wrap, Save/Cancel stay pinned, phone row not squeezed ── */
+  .bk-cards{flex-wrap:wrap!important;gap:8px!important}
+  .bk-cards>div{flex:1 1 44%!important;min-width:0!important}
+  .bk-foot{position:sticky;bottom:0;z-index:5;box-shadow:0 -4px 12px rgba(0,0,0,.08)}
+  .bk-foot button{flex:1;min-height:44px}
+  #bksf_ph,#bkf_ph{flex:1 1 auto!important;width:auto!important;min-width:0!important;padding:11px 8px!important}
+  #bksf_pc_badge{flex:0 0 auto}
+  #bksf_ph+button,#bkf_ph+button{flex:0 0 auto;white-space:nowrap!important;padding:0 10px!important}
   /* ── Booking form grid overrides ── */
   [style*="grid-template-columns:1fr 1fr;gap:12px"],[style*="grid-template-columns:1fr 1fr;gap:14px"],[style*="grid-template-columns:1fr 1fr;gap:16px"]{
     display:grid!important;grid-template-columns:1fr!important;gap:10px!important}
@@ -6546,7 +6554,7 @@ function renderBkStandaloneModal(){
 
     // 01 CLIENT
     +'<div style="font-size:10px;font-weight:800;color:#8a9ab0;text-transform:uppercase;letter-spacing:.7px;margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid #f0f2f5">01 · SELECT CLIENT <span style="color:#e74c3c">*</span></div>'
-    +'<div style="display:flex;gap:10px;margin-bottom:6px">'+cards+'</div>'
+    +'<div class="bk-cards" style="display:flex;gap:10px;margin-bottom:6px">'+cards+'</div>'
     +'<div id="bksc_err" style="color:#e74c3c;font-size:11px;margin-bottom:14px;display:none">⚠️ Please select a client</div>'
 
     // 02 LEAD INFO
@@ -6644,7 +6652,7 @@ function renderBkStandaloneModal(){
     +'<div id="bksf_err" style="color:#e74c3c;font-size:12px;margin-bottom:10px;display:none"></div>'
     +'</div>'
     // FOOTER
-    +'<div style="padding:14px 22px;border-top:1px solid #f0f2f5;display:flex;gap:10px;justify-content:flex-end;background:#fafbfc;border-radius:0 0 14px 14px">'
+    +'<div class="bk-foot" style="padding:14px 22px;border-top:1px solid #f0f2f5;display:flex;gap:10px;justify-content:flex-end;background:#fafbfc;border-radius:0 0 14px 14px">'
     +'<button onclick="bkStandaloneClose()" style="padding:10px 20px;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;border:1.5px solid #e2e6ed;background:#fff;color:#1a2535">Cancel</button>'
     +'<button onclick="bkStandaloneSave()" style="padding:10px 24px;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;border:none;background:#C0392B;color:#fff">💾 '+(isEdit?'Save Changes':'Save Booking')+'</button>'
     +'</div></div></div>';
