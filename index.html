@@ -335,6 +335,12 @@ tr:last-child td{border-bottom:none;}tr:hover td{background:#fafafa;cursor:point
     display:grid!important;grid-template-columns:1fr!important;gap:10px!important}
   /* Auto-fill grids: let them adapt (minmax already works) */
 
+  /* ── Bookings list filter row: desktop uses 5-6 inline columns; on phones use 2 columns, search full width ── */
+  [style*="grid-template-columns:1.5fr 1fr 1fr 1fr"]{display:grid!important;grid-template-columns:1fr 1fr!important;gap:8px!important}
+  [style*="grid-template-columns:1.5fr 1fr 1fr 1fr"]>div:first-child{grid-column:1/-1}
+  [style*="grid-template-columns:1.5fr 1fr 1fr 1fr"]>button{grid-column:1/-1;min-height:40px}
+  [style*="grid-template-columns:1.5fr 1fr 1fr 1fr"] input[type="text"]{padding:4px 2px!important;font-size:16px!important}
+  [style*="grid-template-columns:1.5fr 1fr 1fr 1fr"] select{font-size:14px!important}
   /* ── Booking form grid overrides ── */
   [style*="grid-template-columns:1fr 1fr;gap:12px"],[style*="grid-template-columns:1fr 1fr;gap:14px"],[style*="grid-template-columns:1fr 1fr;gap:16px"]{
     display:grid!important;grid-template-columns:1fr!important;gap:10px!important}
@@ -556,7 +562,7 @@ tr:last-child td{border-bottom:none;}tr:hover td{background:#fafafa;cursor:point
 // login screen and logged to the console, so a quick hard refresh + glance
 // tells him definitively whether Netlify is actually serving THIS file yet,
 // instead of guessing at whether a reported bug was ever really fixed.
-const BUILD_STAMP='2026-11-20-galaxino';
+const BUILD_STAMP='2026-11-21-mobile-fix';
 console.log('[EdvantEdge CRM] build', BUILD_STAMP);
 const SB_URL='https://qyubbieikviesfcorusq.supabase.co';
 const SB_KEY=['eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF5','dWJiaWVpa3ZpZXNmY29ydXNxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU0OTkzNjEsImV4cCI6MjA5MTA3NTM2MX0.t_4mZWd_Qo1KHrGN9imMnnpn6UkLtLFrOeI2Q9lPD08'].join('');
@@ -1606,7 +1612,13 @@ function _renderBody(){
     if(!app) return;
     // Save focused input state before render
     const focusedEl=document.activeElement;
-    const focusedId=focusedEl?.id||'';
+    let focusedId=focusedEl?.id||'';
+    // Inputs without an id (e.g. Bookings search box) lost focus on every keystroke -> on phones the keyboard closed
+    // after one character. Remember their position inside #app and tag the re-rendered twin with a temp id.
+    let _noIdIdx=-1;
+    if(!focusedId&&focusedEl&&(focusedEl.tagName==='INPUT'||focusedEl.tagName==='TEXTAREA')&&app.contains(focusedEl)){
+      _noIdIdx=[...app.querySelectorAll('input,textarea')].indexOf(focusedEl);
+    }
     const focusedVal=focusedEl?.value||'';
     const cursorPos=focusedEl?.selectionStart??null;
     // Save scroll positions before render
@@ -1653,11 +1665,18 @@ function _renderBody(){
     const _mainElNew=document.querySelector('.main');
     if(_mainElNew&&_mainScrollTop>0) _mainElNew.scrollTop=_mainScrollTop;
     // Restore focus to input after render (fixes search box losing focus on each keystroke)
+    if(!focusedId&&_noIdIdx>=0){
+      const _tw=app.querySelectorAll('input,textarea')[_noIdIdx];
+      if(_tw&&(_tw.type==='text'||_tw.type==='search'||_tw.type==='number'||_tw.tagName==='TEXTAREA')&&!_tw.id){
+        _tw.id='__rf_tmp'; focusedId='__rf_tmp';
+      }
+    }
     if(focusedId){
       const restored=document.getElementById(focusedId);
       if(restored&&(restored.tagName==='INPUT'||restored.tagName==='TEXTAREA')){
         restored.focus();
         try{ if(cursorPos!==null) restored.setSelectionRange(cursorPos,cursorPos); }catch(e){}
+        if(restored.id==='__rf_tmp') restored.removeAttribute('id');
       }
     }
 }
