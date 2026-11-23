@@ -570,7 +570,7 @@ tr:last-child td{border-bottom:none;}tr:hover td{background:#fafafa;cursor:point
 // login screen and logged to the console, so a quick hard refresh + glance
 // tells him definitively whether Netlify is actually serving THIS file yet,
 // instead of guessing at whether a reported bug was ever really fixed.
-const BUILD_STAMP='2026-11-23-agent-packets';
+const BUILD_STAMP='2026-11-24-dm-import-export';
 console.log('[EdvantEdge CRM] build', BUILD_STAMP);
 const SB_URL='https://qyubbieikviesfcorusq.supabase.co';
 const SB_KEY=['eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF5','dWJiaWVpa3ZpZXNmY29ydXNxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU0OTkzNjEsImV4cCI6MjA5MTA3NTM2MX0.t_4mZWd_Qo1KHrGN9imMnnpn6UkLtLFrOeI2Q9lPD08'].join('');
@@ -3377,11 +3377,12 @@ async function impRunCheck(){
       let norm=impNorm(mob);
       // separate short country-code column + local number (e.g. 44 + 7796064407)
       if(code&&code.length<=4&&norm&&!norm.startsWith(code)&&norm.length<=11) norm=code+norm;
+      const orig={}; ['parent_name','child_name','grade','email','city','data_set','alt_phone','timezone','country','ethnicity','disposition','priority','relation','comments','notes','client_booked','demo_platform'].forEach(k=>{ orig[k]=String(f[k]==null?'':f[k]).trim(); });
       impClean(f);
       if(!f.data_set&&_imp.dsName) f.data_set=_imp.dsName;   // keep the file's own dataset name; use the typed name only when the file has none
       rows.push({row_no:++rowNo,country:f.country,parent_name:f.parent_name,child_name:f.child_name,grade:f.grade,mobile:mob,norm,
         email:f.email,city:f.city,timezone:f.timezone,ethnicity:f.ethnicity,disposition:f.disposition,data_set:f.data_set,alt_phone:f.alt_phone,agent:f.agent,
-        priority:f.priority,relation:f.relation,comments:f.comments,notes:f.notes,client_booked:f.client_booked,demo_platform:f.demo_platform,cooling_since:f.cooling_since,added_at:f.added_at,status:''});
+        priority:f.priority,relation:f.relation,comments:f.comments,notes:f.notes,client_booked:f.client_booked,demo_platform:f.demo_platform,cooling_since:f.cooling_since,added_at:f.added_at,orig,inCrm:false,status:''});
     }
     if(!rows.length) throw new Error('No data rows were found in that file.');
     // 1) duplicates inside the file / 2) numbers already in the CRM
@@ -3397,6 +3398,7 @@ async function impRunCheck(){
       else { r.status=impClassify(n); if(n) seen[n]=true; }
       cnt[r.status]++;
     });
+    rows.forEach(r=>{ r.inCrm=!!(r.norm&&existing.norms.has(r.norm)); });
     await impResolveAgents(rows);
     _imp.dialMap=existing.dials;
     _imp.rows=rows; _imp.cnt=cnt; _imp.filter=''; _imp.stage=2; _imp.busy=''; _imp.done=null;
@@ -3453,9 +3455,13 @@ async function impResolveAgents(rows){
     if(u.active===false){ r.agentIssue='Agent "'+u.name+'" is inactive'; return; }
     r.agentId=u.id; r.agentName=u.name;
   });
+  const dm={}; Object.keys(DISPS||{}).forEach(k=>dm[k.toLowerCase()]=k);
+  rows.forEach(r=>{ r.ovIssue=''; r.ovDisp=''; const d=(r.orig&&r.orig.disposition)||''; if(d){ if(dm[d.toLowerCase()]) r.ovDisp=dm[d.toLowerCase()]; else r.ovIssue='Disposition "'+d+'" is not a CRM disposition'; } });
 }
 function impIncluded(r){ return r.status==='unique' || (_imp.incBad&&(r.status==='wrong'||r.status==='indian')&&!!r.norm); }
-function impAgentBad(){ return _imp.rows.filter(r=>r.agentIssue&&impIncluded(r)); }
+function impOvOn(){ return _imp.override!==false; }
+function impOvRows(){ return impOvOn()?_imp.rows.filter(r=>r.status==='duplicate'&&r.inCrm):[]; }
+function impAgentBad(){ const ov=new Set(impOvRows()); return _imp.rows.filter(r=>(impIncluded(r)&&r.agentIssue)||(ov.has(r)&&(r.agentIssue||r.ovIssue))); }
 function impViewRows(){ const f=_imp.filter; if(!f) return _imp.rows; if(f==='agent') return impAgentBad(); return _imp.rows.filter(r=>r.status===f); }
 async function impSetFilter(f){ _imp.filter=f; _imp.busy='Loading…'; render(); await impLoadBookings(); _imp.busy=''; render(); }
 function impToggleBad(cb){ _imp.incBad=!!cb.checked; }
@@ -3660,7 +3666,9 @@ async function impStartUpload(){
   if(_imp.busy||_imp.progress) return;
   const incl=r=> r.status==='unique' || (_imp.incBad&&(r.status==='wrong'||r.status==='indian')&&r.norm);
   const list=_imp.rows.filter(incl);
-  if(!list.length){ showToast('Nothing to import — every row is a duplicate or has no usable number','error'); return; }
+  const ovList=impOvRows();
+  if(!list.length&&!ovList.length){ showToast('Nothing to import — every row is a duplicate or has no usable number','error'); return; }
+  if(ovList.length&&!confirm('This will add '+list.length.toLocaleString()+' new leads and UPDATE '+ovList.length.toLocaleString()+' existing leads with the data in your file (only filled-in cells overwrite).\n\nContinue?')) return;
   // agent names were validated at check time; block if anything is still unresolved
   if(impAgentBad().length){ showToast('Fix the agent names first — '+impAgentBad().length+' lead(s) have an agent problem','error'); return; }
   const now=new Date().toISOString(), today=now.slice(0,10);
@@ -3677,7 +3685,7 @@ async function impStartUpload(){
     cooling_since:impDate(r.cooling_since),
     import_batch_id:_imp.batchId, added_at:impDate(r.added_at)||today, updated_at:now
   }));
-  _imp.progress={done:0,total:leads.length,errors:0,msgs:[]}; render();
+  _imp.progress={done:0,total:Math.max(leads.length,1),errors:0,msgs:[]}; render();
   let inserted=0; const BATCH=500;
   for(let i=0;i<leads.length;i+=BATCH){
     const batch=leads.slice(i,i+BATCH);
@@ -3702,7 +3710,23 @@ async function impStartUpload(){
       if(_imp.dsDesc&&newSets.length) await sb.from('crm_datasets').update({description:_imp.dsDesc}).in('name',newSets);
     }catch(e){ console.error('post-import crm_datasets sync failed:',e); }
   }
-  _imp.done={inserted,errors:_imp.progress.errors,msgs:[...new Set(_imp.progress.msgs)],skipped:_imp.cnt.duplicate};
+  // update existing duplicates with the file's data (server-side, indexed match, history logged)
+  const ov={updated:0,errors:[],notFound:0};
+  if(ovList.length){
+    for(let i=0;i<ovList.length;i+=300){
+      const part=ovList.slice(i,i+300).map(r=>{ const o=r.orig||{}; const f={};
+        ['parent_name','child_name','grade','email','city','data_set','alt_phone','ethnicity','priority','relation','comments','notes','client_booked','demo_platform'].forEach(k=>{ if(o[k]) f[k]=o[k]; });
+        if(o.timezone) f.timezone=o.timezone; if(o.timezone) f.Zone=o.timezone; if(o.country) f.Country=normCountry(o.country)||o.country;
+        if(r.ovDisp){ f.disposition=r.ovDisp; f.cooling=!!(DISPS[r.ovDisp]&&DISPS[r.ovDisp].cat==='cooling'); }
+        if(r.agentName==='Fresh pool') f.clear_agent='true'; else if(r.agentId) f.agent_id=r.agentId;
+        return {row:r.row_no,norm:r.norm,f}; });
+      try{ const {data,error}=await sb.rpc('admin_override_by_phone',{p_rows:part});
+        if(error) ov.errors.push({row:'batch',error:error.message}); else { ov.updated+=data.updated||0; ov.notFound+=(data.not_found||[]).length; (data.errors||[]).forEach(e=>ov.errors.push(e)); }
+      }catch(e){ ov.errors.push({row:'batch',error:e.message}); }
+      const tx=document.getElementById('imp-txt'); if(tx) tx.textContent='Updating existing leads… '+Math.min(i+300,ovList.length)+' of '+ovList.length;
+    }
+  }
+  _imp.done={inserted,errors:_imp.progress.errors,msgs:[...new Set(_imp.progress.msgs)],skipped:ovList.length?(_imp.cnt.duplicate-ovList.length):_imp.cnt.duplicate,updated:ov.updated,ovErrors:ov.errors};
   _imp.progress=null; render();
 }
 
@@ -3766,9 +3790,10 @@ function renderImport(){
   if(_imp.done){
     const d=_imp.done;
     return title+impStepper(2)+`<div class="card" style="text-align:center;padding:30px">
-      <div style="font-size:40px">${d.errors&&!d.inserted?'❌':'✅'}</div>
-      <h3 style="margin:8px 0">${d.inserted?'Import complete':'Import failed'}</h3>
-      <p style="color:var(--text2)"><b>${d.inserted.toLocaleString()}</b> leads were added. ${d.skipped?`<b>${d.skipped.toLocaleString()}</b> duplicates were skipped.`:'Duplicates were skipped.'}</p>
+      <div style="font-size:40px">${d.errors&&!d.inserted&&!d.updated?'❌':'✅'}</div>
+      <h3 style="margin:8px 0">${(d.inserted||d.updated)?'Import complete':'Import failed'}</h3>
+      <p style="color:var(--text2)"><b>${d.inserted.toLocaleString()}</b> new leads were added.${d.updated?` <b>${d.updated.toLocaleString()}</b> existing leads were updated.`:''} ${d.skipped?`<b>${d.skipped.toLocaleString()}</b> duplicates were skipped.`:''}</p>
+      ${(d.ovErrors&&d.ovErrors.length)?`<div style="background:#fee2e2;color:#991b1b;border-radius:8px;padding:8px 12px;font-size:12px;margin:10px auto;max-width:560px;text-align:left"><b>${d.ovErrors.length}</b> existing lead update(s) failed:<br>${d.ovErrors.slice(0,10).map(e=>h('row '+e.row+' — '+e.error)).join('<br>')}</div>`:''}
       ${d.errors?`<div style="background:#fee2e2;color:#991b1b;border-radius:8px;padding:8px 12px;font-size:12px;margin:10px auto;max-width:520px"><b>${d.errors.toLocaleString()}</b> rows had a database error: ${h(d.msgs.join(' | '))}</div>`:''}
       <div style="display:flex;gap:10px;justify-content:center;margin-top:14px"><button class="btn" onclick="goPage('leads')">Open All Leads</button><button class="btn btn-outline" onclick="impReset()">Import another file</button></div></div>`;
   }
@@ -3780,13 +3805,13 @@ function renderImport(){
     const bm=_imp.bookMap[r.norm]||{}; let tc=0;
     tc=Object.keys(bm).reduce((a,k)=>a+bm[k],0);
     const cells=BK_CLIENTS.map(cl=>{ const v=bm[cl]||0; return `<td style="text-align:center">${v?`<span style="background:#e0e7ff;color:#3730a3;font-weight:700;border-radius:8px;padding:1px 8px">${v}</span>`:'<span style="color:#ccc">0</span>'}</td>`; }).join('');
-    return `<tr><td style="color:var(--text2)">${r.row_no}</td><td>${h(r.country)}</td><td>${h(r.parent_name)}</td><td>${h(r.child_name)}</td><td>${h(r.grade)}</td><td><b>${h(r.mobile)}</b></td><td>${h(r.email)}</td><td>${h(r.city)}</td><td>${h(r.timezone)}</td><td>${h(r.ethnicity)}</td><td>${h(r.disposition)}</td><td><b>${h(r.data_set)||'—'}</b></td><td style="white-space:nowrap">${r.agentIssue?`<span style="color:#991b1b;font-weight:700" title="${h(r.agentIssue)}">⚠ ${h(r.agentIssue)}</span>`:`<b>${h(r.agentName)}</b>`}</td>${cells}<td style="text-align:center"><b>${tc}</b></td><td style="text-align:center"><b>${_imp.dialMap[r.norm]||0}</b></td><td>${impStatusPill(r.status)}</td></tr>`;
+    return `<tr><td style="color:var(--text2)">${r.row_no}</td><td>${h(r.country)}</td><td>${h(r.parent_name)}</td><td>${h(r.child_name)}</td><td>${h(r.grade)}</td><td><b>${h(r.mobile)}</b></td><td>${h(r.email)}</td><td>${h(r.city)}</td><td>${h(r.timezone)}</td><td>${h(r.ethnicity)}</td><td>${h(r.disposition)}</td><td><b>${h(r.data_set)||'—'}</b></td><td style="white-space:nowrap">${(r.agentIssue||r.ovIssue)&&impAgentBad().includes(r)?`<span style="color:#991b1b;font-weight:700" title="${h(r.agentIssue||r.ovIssue)}">⚠ ${h(r.agentIssue||r.ovIssue)}</span>`:`<b>${h(r.agentName)}</b>`}</td>${cells}<td style="text-align:center"><b>${tc}</b></td><td style="text-align:center"><b>${_imp.dialMap[r.norm]||0}</b></td><td>${impStatusPill(r.status)}</td></tr>`;
   }).join('');
   const th=['#','Country','Parent Name','Child Name','Grade','Mobile','Email','City','Time Zone','Ethnicity','Dispositions','Dataset','Agent'].concat(BK_CLIENTS,['Total Clients','Total Dials','Status']).map(x=>`<th style="padding:8px 10px;text-align:left;font-size:11px;white-space:nowrap;background:#f4f6fa">${x}</th>`).join('');
   const prog=_imp.progress;
   return title+impStepper(2)+`
   <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:14px">
-    ${stat('Unique',c.unique,'#065f46')}${stat('Duplicate (will be skipped)',c.duplicate,'#92400e')}${stat('Wrong number',c.wrong,'#991b1b')}${stat('Indian number',c.indian,'#3730a3')}${stat('Agent problems',impAgentBad().length,impAgentBad().length?'#991b1b':'#065f46')}
+    ${stat('Unique',c.unique,'#065f46')}${stat(impOvOn()?'Duplicate (existing lead gets updated)':'Duplicate (will be skipped)',c.duplicate,'#92400e')}${stat('Wrong number',c.wrong,'#991b1b')}${stat('Indian number',c.indian,'#3730a3')}${stat('Row problems',impAgentBad().length,impAgentBad().length?'#991b1b':'#065f46')}
   </div>
   <div class="card">
     <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:10px">
@@ -3794,21 +3819,21 @@ function renderImport(){
         <div style="font-size:12px;color:var(--text2)">${h(_imp.file)} · ${_imp.rows.length.toLocaleString()} rows · Dataset: <b>${h(impDatasetNames()||'— none —')}</b>${_imp.dsDesc?' · '+h(_imp.dsDesc):''} · demo bookings and dials shown are what is already in the database.</div></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-outline btn-sm" onclick="impDownloadChecked()">⬇ Download checked file</button>${(isSA()&&c.duplicate)?`<button class="btn btn-outline btn-sm" id="imp-exp-dup" onclick="impExportDuplicates()">⬇ Export Duplicates (Excel)</button>`:''}${isSA()?`<button class="btn btn-outline btn-sm" onclick="buReset();goPage('bulkupdate')">✏️ Update existing leads</button>`:''}</div>
     </div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">${pill('','All',_imp.rows.length)}${pill('unique','Unique',c.unique)}${pill('duplicate','Duplicate',c.duplicate)}${pill('wrong','Wrong Number',c.wrong)}${pill('indian','Indian Number',c.indian)}${pill('agent','Agent problems',impAgentBad().length)}</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">${pill('','All',_imp.rows.length)}${pill('unique','Unique',c.unique)}${pill('duplicate','Duplicate',c.duplicate)}${pill('wrong','Wrong Number',c.wrong)}${pill('indian','Indian Number',c.indian)}${pill('agent','Row problems',impAgentBad().length)}</div>
     <div style="overflow:auto;max-height:420px;border:1px solid var(--border,#e2e6ed);border-radius:8px${_imp.busy?';opacity:.5':''}">
       <table style="width:100%;border-collapse:collapse;font-size:12px"><thead style="position:sticky;top:0"><tr>${th}</tr></thead>
       <tbody>${tr||`<tr><td colspan="${16+BK_CLIENTS.length}" style="text-align:center;padding:24px;color:var(--text2)">No rows in this view.</td></tr>`}</tbody></table>
     </div>
     ${(impViewRows().length>1000)?`<p style="font-size:12px;color:var(--text2);margin:8px 0 0">Showing the first 1,000 rows of this view. Every row is still checked and imported – use "Download checked file" to see all of them.</p>`:''}
-    ${(()=>{ const bad=impAgentBad(); if(!bad.length) return ''; const by={}; bad.forEach(r=>{ by[r.agentIssue]=(by[r.agentIssue]||0)+1; });
-      return `<div style="background:#fee2e2;color:#991b1b;border-radius:8px;padding:10px 14px;font-size:13px;margin-top:14px"><b>${bad.length.toLocaleString()} lead${bad.length===1?'':'s'} cannot be imported yet — agent name problem.</b><br>`
+    ${(()=>{ const bad=impAgentBad(); if(!bad.length) return ''; const by={}; bad.forEach(r=>{ const k=r.agentIssue||r.ovIssue; by[k]=(by[k]||0)+1; });
+      return `<div style="background:#fee2e2;color:#991b1b;border-radius:8px;padding:10px 14px;font-size:13px;margin-top:14px"><b>${bad.length.toLocaleString()} lead${bad.length===1?'':'s'} cannot be processed yet — please correct them in your file.</b><br>`
         +Object.keys(by).slice(0,12).map(k=>h(k)+' — '+by[k].toLocaleString()+' row'+(by[k]===1?'':'s')).join('<br>')
         +`<div style="margin-top:6px;font-size:12px">Correct the <b>agent_name</b> column in your file (use the exact CRM agent name, or <b>Fresh pool</b> for unassigned) and upload again. Use the “Agent problems” tab to see the rows.</div></div>`; })()}
     <div style="display:flex;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-top:16px;align-items:center">
       <div><label style="display:flex;gap:8px;align-items:center;font-size:13px;cursor:pointer"><input type="checkbox" id="incBad" ${_imp.incBad?'checked':''} onchange="impToggleBad(this);render()"><span>Also import wrong &amp; Indian numbers (they are saved with their status marked)</span></label>
-        <div style="font-size:12px;color:var(--text2);margin-top:4px">Duplicates are never imported.</div></div>
+        <label style="display:flex;gap:8px;align-items:flex-start;font-size:13px;cursor:pointer;margin-top:8px"><input type="checkbox" ${impOvOn()?'checked':''} onchange="_imp.override=this.checked;render()"><span><b>Duplicates: update the existing lead with this file's data</b><br><span style="font-size:12px;color:var(--text2)">Matches by phone code + number. Only filled-in cells overwrite; blank cells keep the current value. No second lead is created; lead ID, dials, comments and history stay (changes are logged). Untick to skip duplicates instead.</span></span></label></div>
       <div style="display:flex;gap:10px"><button class="btn btn-outline" onclick="impDiscard()" ${prog?'disabled':''}>Cancel</button>
-        <button class="btn" id="startImport" onclick="impStartUpload()" ${(prog||impAgentBad().length)?'disabled':''} ${impAgentBad().length?'title="Fix the agent names first"':''}>⬆ Upload all leads (${importable.toLocaleString()})</button></div>
+        <button class="btn" id="startImport" onclick="impStartUpload()" ${(prog||impAgentBad().length)?'disabled':''} ${impAgentBad().length?'title="Fix the highlighted rows first"':''}>⬆ ${impOvOn()&&impOvRows().length?`Upload ${importable.toLocaleString()} new + update ${impOvRows().length.toLocaleString()} existing`:`Upload all leads (${importable.toLocaleString()})`}</button></div>
     </div>
     ${prog?`<div style="margin-top:16px"><div style="display:flex;justify-content:space-between;margin-bottom:6px"><b>Importing…</b><b id="imp-pct">${Math.round(prog.done/prog.total*100)}%</b></div>
       <div style="height:10px;background:#eef1f6;border-radius:6px;overflow:hidden"><div id="imp-bar" style="height:100%;width:${Math.round(prog.done/prog.total*100)}%;background:#27ae60;transition:width .2s"></div></div>
@@ -5784,10 +5809,15 @@ function renderDataManage(){
     +'<div id="nw-status" style="font-size:12px;color:#1A5276;font-weight:600"></div>'
     +'</div></div></div>'
 
-    // ── DELETE ALL ──
-    +'<div style="background:#fff;border:1px solid var(--border);border-top:3px solid #C0392B;border-radius:10px;padding:14px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">'
-    +'<div><div style="font-size:13px;font-weight:700;color:#C0392B;margin-bottom:3px">⚠️ Delete ALL Leads</div><div style="font-size:12px;color:#888">Permanently removes every lead. Type <b>DELETE ALL LEADS</b> to unlock.</div></div>'
-    +'<div style="display:flex;gap:8px;align-items:center"><input id="dm-confirm" placeholder="Type DELETE ALL LEADS" style="padding:8px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:12px;width:200px;outline:none"><button onclick="dmDeleteAll()" style="padding:8px 16px;background:#C0392B;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:12px;font-weight:700">DELETE ALL</button><span style="font-size:11px" id="dm-all-st"></span></div>'
+    // ── DELETE LEADS (choose dispositions) ──
+    +'<div style="background:#fff;border:1px solid var(--border);border-top:3px solid #C0392B;border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:12px">'
+    +'<div><div style="font-size:13px;font-weight:700;color:#C0392B;margin-bottom:3px">⚠️ Delete Leads — choose dispositions</div><div style="font-size:12px;color:#888">Tick only the dispositions you want to delete. Nothing is deleted until you tick at least one and type <b>DELETE LEADS</b>. A backup CSV of exactly those leads downloads first.</div></div>'
+    +'<div style="display:flex;flex-wrap:wrap;gap:6px 14px;max-height:190px;overflow:auto;border:1px solid #eee;border-radius:8px;padding:10px">'
+      +'<label style="font-size:12px;font-weight:800;color:#C0392B;cursor:pointer;width:100%"><input type="checkbox" id="dm-del-allchk" onchange="document.querySelectorAll(\'.dm-delsel\').forEach(function(c){c.checked=document.getElementById(\'dm-del-allchk\').checked})"> ALL dispositions (every lead)</label>'
+      +['Fresh','Hot','Call back(within 7 days)','Call Back After Exam','Demo Scheduled','Demo Done','Interested (within 15 days)','Partially Booked','Future Potential (outside 30 days)'].concat(ALL_DISPS_BE.filter(d=>d!=='Fresh (reset)'&&!['Hot','Call back(within 7 days)','Call Back After Exam','Demo Scheduled','Demo Done','Interested (within 15 days)','Partially Booked','Future Potential (outside 30 days)'].includes(d)))
+        .map(d=>'<label style="font-size:12px;cursor:pointer;white-space:nowrap"><input type="checkbox" class="dm-delsel" value="'+h(d)+'"> '+(d==='Fresh'?'Fresh (no disposition yet)':h(d))+'</label>').join('')
+    +'</div>'
+    +'<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><input id="dm-confirm" placeholder="Type DELETE LEADS" style="padding:8px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:12px;width:200px;outline:none"><button onclick="dmDeleteAll()" style="padding:8px 16px;background:#C0392B;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:12px;font-weight:700">DELETE SELECTED</button><span style="font-size:12px" id="dm-all-res"></span></div>'
     +'</div>'
 
     // ── DM MODAL ──
@@ -12250,11 +12280,24 @@ async function dmDeleteOverDialled() {
 async function dmDeleteAll() {
   const confirm_text = document.getElementById('dm-confirm')?.value;
   const res = document.getElementById('dm-all-res');
-  if(confirm_text !== 'DELETE ALL LEADS') {
-    showToast('Type DELETE ALL LEADS exactly to confirm','warn'); return;
+  const allChk = !!document.getElementById('dm-del-allchk')?.checked;
+  const picked = [...document.querySelectorAll('.dm-delsel:checked')].map(c=>c.value);
+  if(!allChk && !picked.length){ showToast('Tick at least one disposition to delete','warn'); return; }
+  if(confirm_text !== 'DELETE LEADS') {
+    showToast('Type DELETE LEADS exactly to confirm','warn'); return;
   }
-  if(!confirm('FINAL WARNING: This will delete EVERY lead in the CRM. Are you absolutely sure?')) return;
-  if(!confirm('Last chance — delete ALL leads permanently?')) return;
+  // build the filter for the chosen dispositions (null = every lead)
+  const dispFilter = allChk ? null : (()=>{ const parts=[]; const named=picked.filter(d=>d!=='Fresh');
+    if(picked.includes('Fresh')){ parts.push('disposition.is.null'); parts.push('disposition.eq.""'); }
+    if(named.length) parts.push('disposition.in.('+named.map(d=>'"'+d.replace(/"/g,'')+'"').join(',')+')');
+    return parts.join(','); })();
+  const applyF = q => dispFilter===null ? q : q.or(dispFilter);
+  const _cnt = await applyF(sb.from('crm_leads').select('id',{count:'exact',head:true}));
+  const nSel = _cnt.count||0;
+  if(!nSel){ if(res) res.innerHTML='<span style="color:orange">No leads match the selected dispositions</span>'; return; }
+  const what = allChk ? 'EVERY lead in the CRM' : picked.length+' disposition'+(picked.length===1?'':'s')+' ('+picked.join(', ')+')';
+  if(!confirm('This will permanently delete '+nSel.toLocaleString('en-IN')+' leads — '+what+'.\n\nA backup CSV downloads first. Continue?')) return;
+  if(allChk && !confirm('Last chance — delete ALL leads permanently?')) return;
 
   // ── AUTO BACKUP: export full CSV before any deletion ──────────────────────
   if(res) res.innerHTML = '<span style="color:#b7791f">⏳ Step 1/3: Exporting backup CSV…</span>';
@@ -12263,7 +12306,7 @@ async function dmDeleteAll() {
     const COLS=['id','parent_name','child_name','phone_code','alt_phone','email','city','Zone','Country','grade','ethnicity','data_set','disposition','client_booked','agent_id','agent_name','dialpad_count','added_at','updated_at','cooling_since','notes','comments'];
     let backupRows=[], bpg=0, bdone=false;
     while(!bdone){
-      const {data:bdata}=await sb.from('crm_leads').select(COLS.join(',')).range(bpg*1000,(bpg+1)*1000-1);
+      const {data:bdata}=await applyF(sb.from('crm_leads').select(COLS.join(','))).order('id').range(bpg*1000,(bpg+1)*1000-1);
       if(!bdata||!bdata.length) break;
       backupRows=backupRows.concat(bdata);
       if(bdata.length<1000) bdone=true; else bpg++;
@@ -12285,11 +12328,11 @@ async function dmDeleteAll() {
   }
   // ──────────────────────────────────────────────────────────────────────────
 
-  if(res) res.innerHTML = '<span style="color:var(--red)">⏳ Step 2/3: Wiping database…</span>';
+  if(res) res.innerHTML = '<span style="color:var(--red)">⏳ Step 2/3: Deleting selected leads…</span>';
 
   let total = 0;
   while(true) {
-    const {data, error} = await sb.from('crm_leads').select('id').limit(1000);
+    const {data, error} = await applyF(sb.from('crm_leads').select('id')).limit(1000);
     if(error || !data || !data.length) break;
     const ids = data.map(r => r.id);
     await sb.from('crm_leads').delete().in('id', ids);
@@ -12298,9 +12341,9 @@ async function dmDeleteAll() {
     if(ids.length < 1000) break;
   }
   
-  if(res) res.innerHTML = `<span style="color:#1E8449">✅ Done — deleted ${total.toLocaleString('en-IN')} leads. CRM is now empty and ready for fresh import.</span>`;
+  if(res) res.innerHTML = `<span style="color:#1E8449">✅ Done — deleted ${total.toLocaleString('en-IN')} leads. ${allChk?'CRM is now empty and ready for fresh import.':'Only the selected dispositions were removed.'}</span>`;
   document.getElementById('dm-confirm').value = '';
-  showToast(`✅ Wiped ${total.toLocaleString('en-IN')} leads from CRM`);
+  showToast(`✅ Deleted ${total.toLocaleString('en-IN')} leads`);
   S.asgn = {datasets:[],cities:[],grades:[],zones:[],unassigned:0};
   await loadAsgnData(); render();
 }
@@ -16268,10 +16311,11 @@ function dmHandleCSV(input){
     var lines=e.target.result.split(/\r?\n/).filter(function(l){return l.trim();});if(!lines.length){dmSt2('dm-csv-st','Empty file','err');return;}
     var hdrs=dmParseCSV(lines[0]).map(function(x){return x.trim();});
     var pi=hdrs.findIndex(function(x){return x.toLowerCase()==='phone_code';});
-    if(pi<0){dmSt2('dm-csv-st','Must have phone_code column','err');return;}
-    _dmCSVFields=hdrs.filter(function(x){return x.toLowerCase()!=='phone_code';});if(!_dmCSVFields.length){dmSt2('dm-csv-st','No update columns found','err');return;}
-    _dmCSVRows=lines.slice(1).map(function(l){var v=dmParseCSV(l),r={};hdrs.forEach(function(x,i){r[x]=v[i]?v[i].trim():'';});return r;}).filter(function(r){return r[hdrs[pi]]&&r[hdrs[pi]].trim();});
-    if(!_dmCSVRows.length){dmSt2('dm-csv-st','No rows with phone_code','err');return;}
+    var pj=hdrs.findIndex(function(x){return x.toLowerCase()==='phone';});
+    if(pi<0&&pj<0){dmSt2('dm-csv-st','Must have a phone_code (or phone) column','err');return;}
+    _dmCSVFields=hdrs.filter(function(x){var l=x.toLowerCase();return l!=='phone_code'&&l!=='phone';});if(!_dmCSVFields.length){dmSt2('dm-csv-st','No update columns found','err');return;}
+    _dmCSVRows=lines.slice(1).map(function(l,li){var v=dmParseCSV(l),r={_row:li+2};hdrs.forEach(function(x,i){r[x]=v[i]?v[i].trim():'';});r._key=((pi>=0&&r[hdrs[pi]])?r[hdrs[pi]]:(pj>=0?r[hdrs[pj]]:''))||'';return r;}).filter(function(r){return String(r._key).replace(/\D/g,'').length>=8;});
+    if(!_dmCSVRows.length){dmSt2('dm-csv-st','No rows with a usable phone number','err');return;}
     var drop=document.getElementById('dm-csv-drop');if(drop&&drop.querySelector('div'))drop.querySelector('div').textContent='File: '+file.name;
     dmSt2('dm-csv-st',_dmCSVRows.length.toLocaleString()+' rows loaded. Fields: '+_dmCSVFields.join(', '),'ok');
     document.getElementById('dm-csv-run').style.display='block';
@@ -16280,22 +16324,43 @@ function dmHandleCSV(input){
 async function dmApplyCSV(){
   if(!_dmCSVRows.length)return;var btn=document.getElementById('dm-csv-run');btn.disabled=true;
   var pw=document.getElementById('dm-csv-pw'),pf=document.getElementById('dm-csv-pf');if(pw)pw.style.display='block';
-  var upd=0,errs=0,notFound=[];var BATCH=50;
-  for(var i=0;i<_dmCSVRows.length;i+=BATCH){
-    var batch=_dmCSVRows.slice(i,i+BATCH);
-    await Promise.all(batch.map(async function(row){
-      var phone=row['phone_code'];if(!phone)return;
-      var u={};_dmCSVFields.forEach(function(f){var v=row[f];if(v!==undefined&&v!==''){u[f]=f==='dialpad_count'?parseInt(v)||0:v;}});
-      if(!Object.keys(u).length)return;
-      try{var res=await sb.from('crm_leads').update(u).eq('phone_code',phone).select('id');if(res.error)errs++;else if(res.data&&res.data.length)upd+=res.data.length;else notFound.push(row);}catch(e){errs++;}
-    }));
-    var done=Math.min(i+BATCH,_dmCSVRows.length);if(pf)pf.style.width=Math.round(done/_dmCSVRows.length*100)+'%';
-    dmSt2('dm-csv-st',done.toLocaleString()+' / '+_dmCSVRows.length.toLocaleString()+'...','info');
+  // header -> database field
+  var MAP={parent_name:'parent_name',child_name:'child_name',grade:'grade',email:'email',city:'city',data_set:'data_set',zone:'Zone',timezone:'timezone',country:'Country',ethnicity:'ethnicity',alt_phone:'alt_phone',comments:'comments',notes:'notes',priority:'priority',relation:'relation',client_booked:'client_booked',demo_platform:'demo_platform',dialpad_count:'dialpad_count',disposition:'disposition',agent_name:'agent',agent:'agent',agentname:'agent'};
+  var used=[],ignored=[];_dmCSVFields.forEach(function(h){var k=MAP[h.toLowerCase().replace(/[^a-z_]/g,'')];if(k)used.push([h,k]);else ignored.push(h);});
+  var agents={};try{var us=await sb.rpc('list_crm_users');(us.data||[]).filter(function(u){return u.role==='agent';}).forEach(function(u){agents[String(u.name).trim().toLowerCase()]=u;});}catch(e){}
+  var dm={};Object.keys(DISPS||{}).forEach(function(k){dm[k.toLowerCase()]=k;});
+  var rowsOut=[],bad=[];
+  _dmCSVRows.forEach(function(row){
+    var f={},err=[];
+    used.forEach(function(p){var v=row[p[0]];if(v===undefined||v==='')return;
+      if(p[1]==='agent'){var a=v.toLowerCase();if(/^(fresh ?pool|unassigned|none)$/.test(a))f.clear_agent='true';else if(agents[a])f.agent_id=agents[a].id;else err.push('Agent "'+v+'" is not a CRM user');}
+      else if(p[1]==='disposition'){var d=dm[v.toLowerCase()];if(d){f.disposition=d;f.cooling=!!(DISPS[d]&&DISPS[d].cat==='cooling');}else err.push('Disposition "'+v+'" is not a CRM disposition');}
+      else if(p[1]==='dialpad_count'){f.dialpad_count=String(parseInt(v)||0);}
+      else f[p[1]]=v;});
+    if(err.length){bad.push({row:row._row,phone:row._key,error:err.join('; ')});return;}
+    if(!Object.keys(f).length)return;
+    rowsOut.push({row:row._row,norm:String(row._key).replace(/\D/g,''),f:f,_raw:row});
+  });
+  var upd=0,matched=0,notFound=[],errs=bad.slice(),BATCH=300;
+  for(var i=0;i<rowsOut.length;i+=BATCH){
+    var part=rowsOut.slice(i,i+BATCH);
+    try{
+      var res=await sb.rpc('admin_override_by_phone',{p_rows:part.map(function(r){return{row:r.row,norm:r.norm,f:r.f};})});
+      if(res.error){part.forEach(function(r){errs.push({row:r.row,phone:r.norm,error:res.error.message});});}
+      else{upd+=res.data.updated||0;matched+=res.data.matched||0;
+        (res.data.not_found||[]).forEach(function(n){var r=part.find(function(x){return x.row===n;});if(r)notFound.push(r._raw);});
+        (res.data.errors||[]).forEach(function(e){var r=part.find(function(x){return x.row===e.row;});errs.push({row:e.row,phone:r?r.norm:'',error:e.error});});}
+    }catch(e){part.forEach(function(r){errs.push({row:r.row,phone:r.norm,error:e.message});});}
+    var done=Math.min(i+BATCH,rowsOut.length);if(pf)pf.style.width=Math.round(done/Math.max(rowsOut.length,1)*100)+'%';
+    dmSt2('dm-csv-st',done.toLocaleString()+' / '+rowsOut.length.toLocaleString()+'...','info');
   }
   if(pf)pf.style.width='100%';btn.disabled=false;
-  if(notFound.length){var csv=[Object.keys(notFound[0]).join(',')].concat(notFound.map(function(r){return Object.keys(r).map(function(k){return JSON.stringify(r[k]!=null?r[k]:'');}).join(',');})).join(String.fromCharCode(10));dmDL(csv,'not_found_'+dmNow()+'.csv');}
-  var parts=[];if(upd)parts.push(upd.toLocaleString()+' updated');if(notFound.length)parts.push(notFound.length.toLocaleString()+' not found - CSV downloaded');if(errs)parts.push(errs+' errors');
-  dmSt2('dm-csv-st',parts.join(' | '),upd>0?'ok':'warn');showToast(parts[0]||'Done');
+  if(notFound.length){var cols=Object.keys(notFound[0]).filter(function(k){return k[0]!=='_';});var csv=[cols.join(',')].concat(notFound.map(function(r){return cols.map(function(k){return JSON.stringify(r[k]!=null?r[k]:'');}).join(',');})).join(String.fromCharCode(10));dmDL(csv,'not_found_'+dmNow()+'.csv');}
+  if(errs.length){var ec=['row','phone','error'];var ecsv=[ec.join(',')].concat(errs.map(function(e){return ec.map(function(k){return JSON.stringify(e[k]!=null?e[k]:'');}).join(',');})).join(String.fromCharCode(10));dmDL(ecsv,'errors_'+dmNow()+'.csv');}
+  var parts=[];if(upd)parts.push(upd.toLocaleString()+' leads updated');if(notFound.length)parts.push(notFound.length.toLocaleString()+' not found - CSV downloaded');
+  if(errs.length)parts.push(errs.length+' rows had problems - see errors CSV (first: '+errs[0].error+')');
+  if(ignored.length)parts.push('ignored columns: '+ignored.join(', '));
+  dmSt2('dm-csv-st',parts.join(' | ')||'Nothing to update',upd>0&&!errs.length?'ok':'warn');showToast(parts[0]||'Done');
 }
 
 // ── DM: Delete ALL ────────────────────────────────────────────────────────────
@@ -16657,13 +16722,13 @@ async function clExportCSV(){if(isPartnerAdmin()){showToast('Not available for y
   const btn=document.getElementById('cl-export-btn');
   if(btn){ btn.disabled=true; btn.textContent='Exporting…'; }
   try{
-    const cols='parent_name,child_name,phone_code,alt_phone,email,city,Zone,Country,grade,ethnicity,data_set,dialpad_count,total_dials,disposition,agent_name,updated_at';
+    const cols='id,parent_name,child_name,phone_code,phone,alt_phone,email,city,Zone,Country,grade,ethnicity,data_set,disposition,agent_name,agent_id,comments,notes,priority,relation,client_booked,client,demo_platform,demo_date,demo_time,demo_date_customer,demo_time_customer,timezone,booking_status,rescheduled_date,dialpad_count,total_dials,dialpad_dials,cooling_since,added_at,updated_at,import_batch_id';
     await clEnsureBookMap(true);
     const rows=await dmFetchAll(clBuildQ(cols,true));
     if(!rows.length){ showToast('No leads match the current filter','error'); if(btn){btn.disabled=false;btn.textContent='⬇ Export CSV';} return; }
-    const headers=['Parent Name','Child Name','Phone Code','Alt Phone','Email','City','Zone','Country','Grade','Ethnicity','Dataset','Dials','Dial Count','Total Dials','Disposition','Agent','Last Updated'].concat(BK_CLIENTS,['Other Clients','Total Clients']);
-    const keys=['parent_name','child_name','phone_code','alt_phone','email','city','Zone','Country','grade','ethnicity','data_set','dialpad_count','_dialLabel','total_dials','disposition','agent_name','updated_at'];
-    rows.forEach(r=>{ r._dialLabel=dialLabel(r.total_dials); r.total_dials=r.total_dials||0; const bc=clBookCounts(r.phone_code); BK_CLIENTS.forEach(c=>{r['_c_'+c]=bc.per[c];}); r._other=bc.other; r._tot=bc.total; });
+    const headers=['Lead ID','Parent Name','Child Name','Phone Code','Phone','Alt Phone','Email','City','Zone','Country','Grade','Ethnicity','Dataset','Disposition','Agent Name','Agent ID','Comments','Notes','Priority','Relation','Client Booked','Client','Demo Platform','Demo Date','Demo Time','Customer Demo Date','Customer Demo Time','Timezone','Booking Status','Rescheduled Date','Dials (Dialpad)','Dial Count','Total Dials','Dialpad Dials','Cooling Since','Added On','Last Updated','Import Batch'].concat(BK_CLIENTS,['Other Clients','Total Clients']);
+    const keys=['id','parent_name','child_name','phone_code','phone','alt_phone','email','city','Zone','Country','grade','ethnicity','data_set','disposition','agent_name','agent_id','comments','notes','priority','relation','client_booked','client','demo_platform','demo_date','demo_time','demo_date_customer','demo_time_customer','timezone','booking_status','rescheduled_date','dialpad_count','_dialLabel','total_dials','dialpad_dials','cooling_since','added_at','updated_at','import_batch_id'];
+    rows.forEach(r=>{ if(!r.agent_name&&r.agent_id){ const u=(S.users||[]).find(x=>x.id===r.agent_id); if(u) r.agent_name=u.name; } r._dialLabel=dialLabel(r.total_dials); r.total_dials=r.total_dials||0; const bc=clBookCounts(r.phone_code); BK_CLIENTS.forEach(c=>{r['_c_'+c]=bc.per[c];}); r._other=bc.other; r._tot=bc.total; });
     BK_CLIENTS.forEach(c=>keys.push('_c_'+c)); keys.push('_other','_tot');
     const esc=v=>{ const s=(v===undefined||v===null)?'':String(v); return (s.includes(',')||s.includes('"')||s.includes('\n')) ? '"'+s.replace(/"/g,'""')+'"' : s; };
     const lines=[headers.join(',')];
