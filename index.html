@@ -570,7 +570,7 @@ tr:last-child td{border-bottom:none;}tr:hover td{background:#fafafa;cursor:point
 // login screen and logged to the console, so a quick hard refresh + glance
 // tells him definitively whether Netlify is actually serving THIS file yet,
 // instead of guessing at whether a reported bug was ever really fixed.
-const BUILD_STAMP='2026-11-24-dm-import-export';
+const BUILD_STAMP='2026-11-24-multi-disp';
 console.log('[EdvantEdge CRM] build', BUILD_STAMP);
 const SB_URL='https://qyubbieikviesfcorusq.supabase.co';
 const SB_KEY=['eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF5','dWJiaWVpa3ZpZXNmY29ydXNxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU0OTkzNjEsImV4cCI6MjA5MTA3NTM2MX0.t_4mZWd_Qo1KHrGN9imMnnpn6UkLtLFrOeI2Q9lPD08'].join('');
@@ -5642,7 +5642,9 @@ function renderDataManage(){
     // By Disposition
     +'<div style="background:#fff;border:1px solid var(--border);border-top:3px solid #E74C3C;border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:9px">'
     +'<div style="font-size:11px;font-weight:700;color:var(--navy);padding-bottom:8px;border-bottom:1px solid #F0F0F0">📋 By Disposition</div>'
-    +'<select id="dm-disp" style="padding:7px 8px;border:1.5px solid var(--border);border-radius:6px;font-size:12px;outline:none"><option value="">Loading...</option></select>'
+    +'<div style="display:flex;justify-content:space-between;font-size:11px"><span style="color:#888">Tick one or more dispositions</span><span><a href="javascript:void(0)" onclick="dmDispAll(true)" style="color:#1A6FB3">Select all</a> · <a href="javascript:void(0)" onclick="dmDispAll(false)" style="color:#1A6FB3">Clear</a></span></div>'
+    +'<div id="dm-disp-list" style="max-height:190px;overflow:auto;border:1.5px solid var(--border);border-radius:6px;padding:6px 8px;font-size:12px;display:flex;flex-direction:column;gap:5px"><span style="color:#999">Loading...</span></div>'
+    +'<div id="dm-disp-count" style="font-size:11px;color:#666">0 selected</div>'
     +'<div style="font-size:10px;min-height:14px" id="dm-disp-st"></div>'
     +'<button style="padding:8px;background:#E74C3C;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:11px;font-weight:700;margin-top:auto" onclick="dmPreviewDelete(\'disp\')">Preview & Delete</button></div>'
     // Over-dialled
@@ -5812,10 +5814,10 @@ function renderDataManage(){
     // ── DELETE LEADS (choose dispositions) ──
     +'<div style="background:#fff;border:1px solid var(--border);border-top:3px solid #C0392B;border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:12px">'
     +'<div><div style="font-size:13px;font-weight:700;color:#C0392B;margin-bottom:3px">⚠️ Delete Leads — choose dispositions</div><div style="font-size:12px;color:#888">Tick only the dispositions you want to delete. Nothing is deleted until you tick at least one and type <b>DELETE LEADS</b>. A backup CSV of exactly those leads downloads first.</div></div>'
-    +'<div style="display:flex;flex-wrap:wrap;gap:6px 14px;max-height:190px;overflow:auto;border:1px solid #eee;border-radius:8px;padding:10px">'
+    +'<div id="dm-delsel-wrap" style="display:flex;flex-wrap:wrap;gap:6px 14px;max-height:190px;overflow:auto;border:1px solid #eee;border-radius:8px;padding:10px">'
       +'<label style="font-size:12px;font-weight:800;color:#C0392B;cursor:pointer;width:100%"><input type="checkbox" id="dm-del-allchk" onchange="document.querySelectorAll(\'.dm-delsel\').forEach(function(c){c.checked=document.getElementById(\'dm-del-allchk\').checked})"> ALL dispositions (every lead)</label>'
       +['Fresh','Hot','Call back(within 7 days)','Call Back After Exam','Demo Scheduled','Demo Done','Interested (within 15 days)','Partially Booked','Future Potential (outside 30 days)'].concat(ALL_DISPS_BE.filter(d=>d!=='Fresh (reset)'&&!['Hot','Call back(within 7 days)','Call Back After Exam','Demo Scheduled','Demo Done','Interested (within 15 days)','Partially Booked','Future Potential (outside 30 days)'].includes(d)))
-        .map(d=>'<label style="font-size:12px;cursor:pointer;white-space:nowrap"><input type="checkbox" class="dm-delsel" value="'+h(d)+'"> '+(d==='Fresh'?'Fresh (no disposition yet)':h(d))+'</label>').join('')
+        .map(d=>'<label class="dm-dsl" style="font-size:12px;cursor:pointer;white-space:nowrap"><input type="checkbox" class="dm-delsel" value="'+h(d)+'"> '+(d==='Fresh'?'Fresh (no disposition yet)':h(d))+'</label>').join('')
     +'</div>'
     +'<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><input id="dm-confirm" placeholder="Type DELETE LEADS" style="padding:8px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:12px;width:200px;outline:none"><button onclick="dmDeleteAll()" style="padding:8px 16px;background:#C0392B;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:12px;font-weight:700">DELETE SELECTED</button><span style="font-size:12px" id="dm-all-res"></span></div>'
     +'</div>'
@@ -16184,7 +16186,8 @@ async function dmInitFilterValues(){
   rawDisps.forEach(function(d){var key=d.toLowerCase();if(!dispMap[key])dispMap[key]=d;});
   var disps=Object.values(dispMap).sort();
   var dispOptDel='<option value="">-- Select disposition --</option>'+disps.map(function(d){return '<option value="'+h(d)+'">'+h(d)+'</option>';}).join('');
-  var el=g('dm-disp');if(el)el.innerHTML=dispOptDel;
+  var dl=g('dm-disp-list');if(dl){ var keep=dmDispSelected(); dl.innerHTML=disps.map(function(d){return '<label style="display:flex;gap:7px;align-items:center;cursor:pointer"><input type="checkbox" class="dm-dispchk" value="'+h(d)+'"'+(keep.indexOf(d)>=0?' checked':'')+' onchange="dmDispCount()"> '+h(d)+'</label>';}).join(''); dmDispCount(); }
+  var dw=g('dm-delsel-wrap');if(dw){ var keep2=[].slice.call(dw.querySelectorAll('.dm-delsel:checked')).map(function(c){return c.value;}); dw.querySelectorAll('label.dm-dsl').forEach(function(l){l.remove();}); dw.insertAdjacentHTML('beforeend',['Fresh'].concat(disps).map(function(d){return '<label class="dm-dsl" style="font-size:12px;cursor:pointer;white-space:nowrap"><input type="checkbox" class="dm-delsel" value="'+h(d)+'"'+(keep2.indexOf(d)>=0?' checked':'')+'> '+(d==='Fresh'?'Fresh (no disposition yet)':h(d))+'</label>';}).join('')); }
   var beDisp=g('be-find-disp');if(beDisp)beDisp.innerHTML='<option value="">— Any —</option><option value="Fresh">Fresh (no disposition)</option>'+disps.map(function(d){return '<option value="'+h(d)+'">'+h(d)+'</option>';}).join('');
 
   // Countries — deduplicated
@@ -16200,11 +16203,14 @@ var _dmPD=[],_dmDT='',_dmDV=null;
 var DM_SEL='id,phone_code,parent_name,child_name,Country,data_set,disposition,dialpad_count';
 var DM_COLS=['phone_code','parent_name','child_name','Country','data_set','disposition','dialpad_count'];
 
+function dmDispSelected(){ return [].slice.call(document.querySelectorAll('.dm-dispchk:checked')).map(function(c){return c.value;}); }
+function dmDispCount(){ var n=dmDispSelected().length,e=document.getElementById('dm-disp-count'); if(e)e.textContent=n+' selected'; }
+function dmDispAll(on){ document.querySelectorAll('.dm-dispchk').forEach(function(c){c.checked=on;}); dmDispCount(); }
 async function dmPreviewDelete(type){
   var q,cq,title,sid,val;
   if(type==='country'){val=document.getElementById('dm-country')&&document.getElementById('dm-country').value;sid='dm-country-st';if(!val){dmSt2(sid,'Select a country first','warn');return;}q=sb.from('crm_leads').select(DM_SEL).eq('Country',val);cq=sb.from('crm_leads').select('*',{count:'exact',head:true}).eq('Country',val);title='Delete leads from: '+val;}
   else if(type==='dataset'){val=document.getElementById('dm-dataset')&&document.getElementById('dm-dataset').value;sid='dm-dataset-st';if(!val){dmSt2(sid,'Select a dataset first','warn');return;}q=sb.from('crm_leads').select(DM_SEL).eq('data_set',val);cq=sb.from('crm_leads').select('*',{count:'exact',head:true}).eq('data_set',val);title='Delete dataset: '+val;}
-  else if(type==='disp'){val=document.getElementById('dm-disp')&&document.getElementById('dm-disp').value;sid='dm-disp-st';if(!val){dmSt2(sid,'Select a disposition first','warn');return;}q=sb.from('crm_leads').select(DM_SEL).eq('disposition',val);cq=sb.from('crm_leads').select('*',{count:'exact',head:true}).eq('disposition',val);title='Delete disposition: '+val;}
+  else if(type==='disp'){val=dmDispSelected();sid='dm-disp-st';if(!val.length){dmSt2(sid,'Tick at least one disposition first','warn');return;}q=sb.from('crm_leads').select(DM_SEL).in('disposition',val);cq=sb.from('crm_leads').select('*',{count:'exact',head:true}).in('disposition',val);title='Delete '+val.length+' disposition'+(val.length===1?'':'s')+': '+val.join(', ');}
   else{val=parseInt(document.getElementById('dm-dials')&&document.getElementById('dm-dials').value)||5;sid='dm-dials-st';q=sb.from('crm_leads').select(DM_SEL).gte('dialpad_count',val).not('disposition','ilike','%demo%').not('disposition','ilike','%hot%');cq=sb.from('crm_leads').select('*',{count:'exact',head:true}).gte('dialpad_count',val).not('disposition','ilike','%demo%').not('disposition','ilike','%hot%');title='Delete '+val+'+ dialled leads';}
   dmSt2(sid,'Loading preview...','info');
   var results=await Promise.all([q.range(0,99),cq]);
@@ -16224,7 +16230,7 @@ function dmCloseModal(){var m=document.getElementById('dm-modal');if(m)m.style.d
 function dmDownloadPreviewCSV(){if(!_dmPD.length)return;var csv=[DM_COLS.join(',')].concat(_dmPD.map(function(r){return DM_COLS.map(function(c){return JSON.stringify(r[c]!=null?r[c]:'');}).join(',');})).join(String.fromCharCode(10));dmDL(csv,'preview_'+dmNow()+'.csv');}
 async function dmExecute(type,val,sid){
   dmCloseModal();dmSt2(sid,'Downloading backup CSV...','info');
-  var aq;if(type==='country')aq=sb.from('crm_leads').select(DM_SEL).eq('Country',val);else if(type==='dataset')aq=sb.from('crm_leads').select(DM_SEL).eq('data_set',val);else if(type==='disp')aq=sb.from('crm_leads').select(DM_SEL).eq('disposition',val);else aq=sb.from('crm_leads').select(DM_SEL).gte('dialpad_count',val).not('disposition','ilike','%demo%').not('disposition','ilike','%hot%');
+  var aq;if(type==='country')aq=sb.from('crm_leads').select(DM_SEL).eq('Country',val);else if(type==='dataset')aq=sb.from('crm_leads').select(DM_SEL).eq('data_set',val);else if(type==='disp')aq=sb.from('crm_leads').select(DM_SEL).in('disposition',val);else aq=sb.from('crm_leads').select(DM_SEL).gte('dialpad_count',val).not('disposition','ilike','%demo%').not('disposition','ilike','%hot%');
   var all=await dmFetchAll(aq);
   if(all.length){var csv=[DM_COLS.join(',')].concat(all.map(function(r){return DM_COLS.map(function(c){return JSON.stringify(r[c]!=null?r[c]:'');}).join(',');})).join(String.fromCharCode(10));dmDL(csv,'deleted_'+dmNow()+'.csv');}
   dmSt2(sid,'Deleting...','info');var ids=all.map(function(r){return r.id;});var del=0;
