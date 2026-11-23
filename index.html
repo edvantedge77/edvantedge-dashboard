@@ -570,7 +570,7 @@ tr:last-child td{border-bottom:none;}tr:hover td{background:#fafafa;cursor:point
 // login screen and logged to the console, so a quick hard refresh + glance
 // tells him definitively whether Netlify is actually serving THIS file yet,
 // instead of guessing at whether a reported bug was ever really fixed.
-const BUILD_STAMP='2026-11-21-mobile-fix';
+const BUILD_STAMP='2026-11-23-dup-bulk';
 console.log('[EdvantEdge CRM] build', BUILD_STAMP);
 const SB_URL='https://qyubbieikviesfcorusq.supabase.co';
 const SB_KEY=['eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF5','dWJiaWVpa3ZpZXNmY29ydXNxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU0OTkzNjEsImV4cCI6MjA5MTA3NTM2MX0.t_4mZWd_Qo1KHrGN9imMnnpn6UkLtLFrOeI2Q9lPD08'].join('');
@@ -1901,6 +1901,7 @@ async function goPage(p){
   }
   else if(p==='teamchat'){ chatInit(); }
   else if(p==='import')  { render(); } // Static page
+  else if(p==='bulkupdate'){ render(); } // Static page (Super Admin)
   else if(p==='cdr')     { _cdr.batches=null; render(); }
   else if(p==='loginlog'){ _lg.rows=null; render(); }
   else if(p==='leadlists'){ _ll.rows=null; render(); }
@@ -3448,6 +3449,192 @@ function impDownloadChecked(){
   a.download='checked_'+(_imp.file||'import').replace(/\.[^.]+$/,'')+'.csv'; a.click();
 }
 
+// ══ Duplicate export + bulk override of EXISTING leads (Super Admin only) ══════════════════════════
+// Match key = full phone number digits (phone_code + number, same value the CRM stores in phone_code).
+// Update only — never inserts leads. Server RPC keeps lead id / dials / comments and logs every change in crm_activity.
+async function dupFetchExisting(norms,onProg){
+  const uniq=[...new Set(norms.filter(Boolean))], out={}, CH=300;
+  for(let i=0;i<uniq.length;i+=CH){
+    const {data,error}=await sb.rpc('admin_dup_lookup',{p_norms:uniq.slice(i,i+CH)});
+    if(error) throw new Error(error.message);
+    (data||[]).forEach(l=>{ [l.norm,impNorm(l.phone)].forEach(k=>{ if(k){ (out[k]=out[k]||[]); if(!out[k].some(z=>z.id===l.id)) out[k].push(l); } }); });
+    if(onProg) onProg(Math.min(i+CH,uniq.length),uniq.length);
+  }
+  return out;
+}
+async function impExportDuplicates(){
+  if(!isSA()) return;
+  const dups=_imp.rows.filter(r=>r.status==='duplicate');
+  if(!dups.length){ showToast('No duplicates found in this file','info'); return; }
+  const btn=document.getElementById('imp-exp-dup'); if(btn){ btn.disabled=true; btn.textContent='⏳ Preparing…'; }
+  try{
+    const X=await impLoadXlsx();
+    const ex=await dupFetchExisting(dups.map(r=>r.norm),(d,t)=>{ if(btn) btn.textContent='⏳ Matching '+d+'/'+t; });
+    const head=['Match Key (Phone)','Lead ID','Duplicate Type','Existing Phone Code','Existing Parent Name','Existing Child Name','Existing Agent','Existing Disposition','Existing Data Set','Existing Country','Existing Total Dials','Existing Added On',
+      'Uploaded Row #','Uploaded Parent','Uploaded Child','Uploaded Mobile','Uploaded Email','Uploaded City','Uploaded Grade','Uploaded Data Set','Uploaded Disposition','Uploaded Country',
+      'New Agent','New Phone Code','New Parent Name','New Disposition'];
+    const aoa=[head];
+    dups.forEach(r=>{
+      const list=ex[r.norm]||[];
+      const up=[r.row_no,r.parent_name,r.child_name,r.mobile,r.email,r.city,r.grade,r.data_set,r.disposition,r.country];
+      if(!list.length) aoa.push([r.norm,'','Repeated inside the uploaded file','','','','','','','','','',...up,'','','','']);
+      else list.forEach(l=>aoa.push([r.norm,l.id,'Already in CRM',l.phone_code,l.parent_name,l.child_name,l.agent_name||'',l.disposition||'Fresh',l.data_set||'',l.country||'',l.total_dials||0,l.added_at||'',...up,'','','','']));
+    });
+    const ws=X.utils.aoa_to_sheet(aoa); ws['!cols']=head.map((x,i)=>({wch:i===1?30:Math.max(14,Math.min(26,x.length+2))}));
+    const help=X.utils.aoa_to_sheet([
+      ['HOW TO BULK-UPDATE EXISTING LEADS WITH THIS FILE'],[''],
+      ['1. Keep the "Match Key (Phone)" and "Lead ID" columns exactly as they are — they identify the existing lead.'],
+      ['2. Fill ONLY the yellow-label columns you want to change: New Agent, New Phone Code, New Parent Name, New Disposition. Leave a cell blank to keep the current value.'],
+      ['3. To move a lead back to the fresh pool, type  Fresh pool  in New Agent.'],
+      ['4. Delete rows you do NOT want to touch (or leave their New columns blank).'],
+      ['5. In the CRM go to Import Data → "Update existing leads", upload this file, review the preview, tick the leads to update and apply.'],
+      ['Nothing is created or deleted. Lead ID, calling attempts, comments and old dispositions stay; every change is added to the lead history.']]);
+    ws['!freeze']=null; const wb=X.utils.book_new(); X.utils.book_append_sheet(wb,ws,'Duplicates'); X.utils.book_append_sheet(wb,help,'How to update');
+    X.writeFile(wb,'duplicates_'+(_imp.file||'import').replace(/\.[^.]+$/,'')+'_'+new Date().toISOString().slice(0,10)+'.xlsx');
+    showToast('Exported '+(aoa.length-1).toLocaleString()+' duplicate records','success');
+  }catch(e){ showToast('Export failed: '+e.message,'error'); }
+  if(btn){ btn.disabled=false; btn.textContent='⬇ Export Duplicates (Excel)'; }
+}
+
+// ── Bulk update page ───────────────────────────────────────────────
+let _bu={stage:1,file:'',rows:[],busy:'',filter:'matched',sel:{},result:null,agents:{}};
+function buReset(){ _bu={stage:1,file:'',rows:[],busy:'',filter:'matched',sel:{},result:null,agents:{}}; render(); }
+function buHdr(s){ return String(s||'').toLowerCase().replace(/[^a-z0-9]+/g,''); }
+async function buHandleFile(inp){
+  if(!isSA()) return;
+  const f=inp.files&&inp.files[0]; if(!f) return; inp.value='';
+  _bu.busy='Reading file…'; render();
+  try{
+    const grid=await impReadRows(f);
+    if(grid.length<2) throw new Error('The file is empty');
+    const H=grid[0].map(buHdr);
+    const ix=(names)=>{ for(const n of names){ const i=H.indexOf(n); if(i>=0) return i; } return -1; };
+    const c={ id:ix(['leadid','id']), key:ix(['matchkeyphone','matchkey','phone','mobile','phonenumber','number','contact']), code:ix(['phonecode']),
+      nAgent:ix(['newagent','newagentname','agentname','agent']), nCode:ix(['newphonecode']), nParent:ix(['newparentname','newparent','newcustomername','parentname','parent','customername']),
+      nDisp:ix(['newdisposition','disposition']) };
+    if(c.id<0&&c.key<0) throw new Error('Need a "Lead ID" or "Match Key (Phone)" / "Phone" column to identify existing leads');
+    if(c.nAgent<0&&c.nCode<0&&c.nParent<0&&c.nDisp<0) throw new Error('No update columns found. Add: New Agent, New Phone Code, New Parent Name and/or New Disposition');
+    // if the file has both a "phone code" column and a phone column, match on code+number as well
+    const cell=(r,i)=>i>=0?String(r[i]==null?'':r[i]).trim():'';
+    const raw=[];
+    for(let i=1;i<grid.length;i++){
+      const r=grid[i]; if(!r.some(v=>String(v).trim())) continue;
+      const ph=cell(r,c.key), pc=(c.code>=0&&c.code!==c.key)?cell(r,c.code):'';
+      const keys=[...new Set([impNorm(ph), pc?impNorm(pc+ph):'' , pc&&!ph?impNorm(pc):''].filter(Boolean))];
+      raw.push({row:i+1,lead_id:cell(r,c.id),keys,mobile:ph,nAgent:cell(r,c.nAgent),nCode:cell(r,c.nCode),nParent:cell(r,c.nParent),nDisp:cell(r,c.nDisp)});
+    }
+    if(!raw.length) throw new Error('No data rows found');
+    _bu.busy='Matching '+raw.length.toLocaleString()+' rows against the CRM…'; render();
+    const ex=await dupFetchExisting(raw.flatMap(r=>r.keys));
+    // lead ids given in the file that are not covered by number lookup
+    const needIds=raw.filter(r=>r.lead_id&&!r.keys.some(k=>(ex[k]||[]).some(l=>l.id===r.lead_id))).map(r=>r.lead_id);
+    const byId={}; Object.values(ex).flat().forEach(l=>byId[l.id]=l);
+    for(let i=0;i<needIds.length;i+=100){ const {data}=await sb.from('crm_leads').select('id,phone,phone_code,parent_name,child_name,agent_id,agent_name,disposition,total_dials').in('id',needIds.slice(i,i+100)); (data||[]).forEach(l=>{ l.norm=impNorm(l.phone_code); byId[l.id]=l; }); }
+    const {data:us}=await sb.rpc('list_crm_users'); const ag={}; (us||[]).filter(u=>u.role==='agent').forEach(u=>{ ag[String(u.name).toLowerCase()]=u; });
+    _bu.agents=ag;
+    const dispMap={}; Object.keys(DISPS||{}).forEach(k=>dispMap[k.toLowerCase()]=k);
+    const seenLead={};
+    _bu.rows=raw.map(r=>{
+      const o={...r,status:'',msg:'',lead:null,ch:{}};
+      let cands=[];
+      if(r.lead_id&&byId[r.lead_id]) cands=[byId[r.lead_id]];
+      else if(r.lead_id) { o.status='notfound'; o.msg='Lead ID not found'; return o; }
+      else { const m={}; r.keys.forEach(k=>(ex[k]||[]).forEach(l=>m[l.id]=l)); cands=Object.values(m); }
+      if(!cands.length){ o.status='notfound'; o.msg='No existing lead with this number — not created'; return o; }
+      if(cands.length>1){ o.status='ambiguous'; o.msg=cands.length+' leads share this number — add the Lead ID column'; o.lead=cands[0]; return o; }
+      const l=cands[0]; o.lead=l;
+      if(seenLead[l.id]){ o.status='dupfile'; o.msg='Same lead appears again in this file (row '+seenLead[l.id]+')'; return o; }
+      seenLead[l.id]=r.row;
+      const errs=[];
+      if(r.nAgent){ const a=r.nAgent.toLowerCase(); if(/^(fresh ?pool|unassigned|none)$/.test(a)){ if(l.agent_id) o.ch.clear_agent=true; } else if(ag[a]){ if(ag[a].id!==l.agent_id){ o.ch.agent_id=ag[a].id; o.ch.agent_name=ag[a].name; } } else errs.push('Agent "'+r.nAgent+'" not found'); }
+      if(r.nDisp){ const d=dispMap[r.nDisp.toLowerCase()]; if(!d) errs.push('Disposition "'+r.nDisp+'" is not a CRM disposition'); else if(d!==l.disposition){ o.ch.disposition=d; o.ch.cooling=(DISPS[d]&&DISPS[d].cat==='cooling'); } }
+      if(r.nParent&&r.nParent!==(l.parent_name||'')) o.ch.parent_name=r.nParent;
+      if(r.nCode){ const nn=impNorm(r.nCode); if(nn.length<8) errs.push('New Phone Code looks invalid'); else if(nn!==impNorm(l.phone_code)) o.ch.phone_code=r.nCode.replace(/\s+/g,''); }
+      if(errs.length){ o.status='invalid'; o.msg=errs.join('; '); return o; }
+      if(!Object.keys(o.ch).length){ o.status='nochange'; o.msg='Already has these values'; return o; }
+      o.status='matched'; return o;
+    });
+    _bu.sel={}; _bu.rows.forEach((o,i)=>{ if(o.status==='matched') _bu.sel[i]=true; });
+    _bu.file=f.name; _bu.stage=2; _bu.filter='matched'; _bu.busy='';
+  }catch(e){ _bu.busy=''; showToast(e.message||String(e),'error'); }
+  render();
+}
+function buView(){ return _bu.rows.map((o,i)=>({o,i})).filter(x=>!_bu.filter||x.o.status===_bu.filter); }
+function buCount(s){ return _bu.rows.filter(o=>!s||o.status===s).length; }
+function buSetFilter(f){ _bu.filter=f; render(); }
+function buToggle(i,cb){ if(cb.checked) _bu.sel[i]=true; else delete _bu.sel[i]; buUpdateApplyBtn(); }
+function buSelAll(on){ buView().forEach(x=>{ if(x.o.status==='matched'){ if(on) _bu.sel[x.i]=true; else delete _bu.sel[x.i]; } }); render(); }
+function buSelCount(){ return Object.keys(_bu.sel).filter(i=>_bu.rows[i]&&_bu.rows[i].status==='matched').length; }
+function buUpdateApplyBtn(){ const b=document.getElementById('bu-apply'); if(b){ const n=buSelCount(); b.textContent='✔ Apply to '+n.toLocaleString()+' selected lead'+(n===1?'':'s'); b.disabled=!n; } }
+async function buApply(){
+  if(!isSA()||_bu.busy) return;
+  const idx=Object.keys(_bu.sel).map(Number).filter(i=>_bu.rows[i]&&_bu.rows[i].status==='matched');
+  if(!idx.length) return;
+  const cnt={agent:0,disp:0,parent:0,code:0}; idx.forEach(i=>{ const c=_bu.rows[i].ch; if(c.agent_id||c.clear_agent)cnt.agent++; if(c.disposition)cnt.disp++; if(c.parent_name)cnt.parent++; if(c.phone_code)cnt.code++; });
+  if(!confirm('Update '+idx.length.toLocaleString()+' EXISTING leads?\n\nAgent changes: '+cnt.agent+'\nDisposition changes: '+cnt.disp+'\nParent name changes: '+cnt.parent+'\nPhone code changes: '+cnt.code+'\n\nNo leads are created or deleted. Lead IDs, dials and comments stay; every change is added to lead history.')) return;
+  _bu.busy='Updating…'; _bu.prog={done:0,total:idx.length}; render();
+  const res={updated:0,unchanged:0,errors:[]};
+  for(let i=0;i<idx.length;i+=300){
+    const part=idx.slice(i,i+300).map(k=>{ const o=_bu.rows[k]; return {lead_id:o.lead.id,match_norm:impNorm(o.lead.phone_code),...o.ch}; });
+    try{
+      const {data,error}=await sb.rpc('admin_bulk_override',{p_changes:part});
+      if(error) res.errors.push({lead_id:'(batch '+(i/300+1)+')',error:error.message});
+      else { res.updated+=data.updated||0; res.unchanged+=data.unchanged||0; (data.errors||[]).forEach(e=>res.errors.push(e)); }
+    }catch(e){ res.errors.push({lead_id:'(batch)',error:e.message}); }
+    _bu.prog.done=Math.min(i+300,idx.length);
+    const bar=document.getElementById('bu-bar'); if(bar) bar.style.width=Math.round(_bu.prog.done/idx.length*100)+'%';
+  }
+  try{ if(S.cl){S.cl.counts=null;S.cl.leads=[];S.cl.fv=null;} ['freshLeads','agentKittyLeads','coolingLeads','disposedLeads','adminTodayLeads'].forEach(n=>{ if(S[n]) S[n]=null; }); }catch(e){}
+  _bu.busy=''; _bu.prog=null; _bu.result=res; render();
+}
+function buDownloadReport(){
+  impLoadXlsx().then(X=>{
+    const head=['Row','Lead ID','Phone (match key)','Result','Details','Current Agent','Current Disposition','Current Parent','New Agent','New Phone Code','New Parent Name','New Disposition'];
+    const lbl={matched:'Ready to update',notfound:'Not found (skipped)',ambiguous:'Ambiguous (skipped)',invalid:'Invalid (skipped)',nochange:'No change',dupfile:'Repeated in file (skipped)'};
+    const aoa=[head].concat(_bu.rows.map(o=>[o.row,o.lead?o.lead.id:o.lead_id,o.mobile,lbl[o.status]||o.status,o.msg,o.lead?(o.lead.agent_name||''):'',o.lead?(o.lead.disposition||'Fresh'):'',o.lead?(o.lead.parent_name||''):'',o.nAgent,o.nCode,o.nParent,o.nDisp]));
+    const wb=X.utils.book_new(); X.utils.book_append_sheet(wb,X.utils.aoa_to_sheet(aoa),'Preview'); X.writeFile(wb,'bulk_update_preview_'+new Date().toISOString().slice(0,10)+'.xlsx');
+  });
+}
+function buStatusPill(s){ const m={matched:['Will update','#d1fae5','#065f46'],notfound:['Not found','#fee2e2','#991b1b'],ambiguous:['Ambiguous','#fef3c7','#92400e'],invalid:['Invalid','#fee2e2','#991b1b'],nochange:['No change','#eef1f6','#44546a'],dupfile:['Repeated','#fef3c7','#92400e']}[s]||['—','#eee','#555'];
+  return `<span style="background:${m[1]};color:${m[2]};font-size:11px;font-weight:700;padding:2px 9px;border-radius:9px;white-space:nowrap">${m[0]}</span>`; }
+function renderBulkUpdate(){
+  if(!isSA()) return '<div class="card">Not available.</div>';
+  const title=`<div class="pg-title" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">Update Existing Leads <span style="font-size:12px;font-weight:400;color:var(--text2)">Upload an Excel file to correct many existing leads at once — nothing new is created.</span></div>`;
+  if(_bu.busy&&!_bu.prog) return title+`<div class="card" style="text-align:center;padding:30px;color:var(--text2)">⏳ ${h(_bu.busy)}</div>`;
+  if(_bu.result){ const r=_bu.result; return title+`<div class="card" style="text-align:center;padding:28px"><div style="font-size:40px">${r.updated?'✅':'⚠️'}</div><h3 style="margin:8px 0">${r.updated.toLocaleString()} leads updated</h3>
+    <p style="color:var(--text2)">${r.unchanged?r.unchanged+' had nothing to change. ':''}Lead IDs, dials, comments and earlier history are untouched; each change was added to lead history.</p>
+    ${r.errors.length?`<div style="background:#fee2e2;color:#991b1b;border-radius:8px;padding:8px 12px;font-size:12px;margin:10px auto;max-width:640px;text-align:left"><b>${r.errors.length}</b> not updated:<br>${r.errors.slice(0,15).map(e=>h((e.lead_id||'')+' — '+e.error)).join('<br>')}</div>`:''}
+    <div style="display:flex;gap:10px;justify-content:center;margin-top:14px"><button class="btn" onclick="goPage('leads')">Open All Leads</button><button class="btn btn-outline" onclick="buReset()">Update more</button></div></div>`; }
+  if(_bu.stage===1) return title+`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px">
+    <div class="card"><h3 style="margin:0 0 6px">Upload your updated file</h3>
+      <p style="font-size:13px;color:var(--text2);margin:0 0 12px">Use the Excel from <b>Export Duplicates</b> (Import Data), fill the <b>New …</b> columns, and upload it here. You will see exactly which leads change before anything is saved.</p>
+      <input type="file" id="bu-file" accept=".xlsx,.xls,.csv" style="display:none" onchange="buHandleFile(this)">
+      <button class="btn" onclick="document.getElementById('bu-file').click()">📂 Choose Excel / CSV file</button></div>
+    <div class="card"><h3 style="margin:0 0 6px">How leads are matched</h3>
+      <ul style="font-size:13px;color:var(--text2);margin:0;padding-left:18px;line-height:1.7"><li>By <b>Lead ID</b> if the column is present, otherwise by the full number (<b>phone code + number</b>).</li>
+      <li>Columns read: <b>New Agent</b>, <b>New Phone Code</b>, <b>New Parent Name</b>, <b>New Disposition</b> (blank = keep as is). Type <b>Fresh pool</b> in New Agent to unassign.</li>
+      <li>Numbers that are not in the CRM are <b>never created</b>.</li><li>Calling attempts, comments, lead IDs and old dispositions stay; every change is added to lead history.</li></ul></div></div>`;
+  const f=_bu.filter, rows=buView().slice(0,500), n=buSelCount();
+  const pill=(k,l)=>`<a href="javascript:void(0)" onclick="buSetFilter('${k}')" style="padding:6px 14px;border-radius:16px;font-size:12px;font-weight:700;text-decoration:none;${f===k?'background:#1a2535;color:#fff':'background:#eef1f6;color:#44546a'}">${l} (${buCount(k).toLocaleString()})</a>`;
+  const chg=(a,b)=>b?`<div style="font-size:11px"><span style="color:#999;text-decoration:line-through">${h(a||'—')}</span> → <b style="color:#065f46">${h(b)}</b></div>`:'';
+  const tr=rows.map(({o,i})=>{ const l=o.lead||{}, c=o.ch||{};
+    return `<tr><td style="padding:6px 8px">${o.status==='matched'?`<input type="checkbox" ${_bu.sel[i]?'checked':''} onchange="buToggle(${i},this)">`:''}</td><td style="color:var(--text2)">${o.row}</td>
+    <td><b>${h(o.mobile||(l.phone_code||''))}</b><div style="font-size:10px;color:#999">${h(l.id||o.lead_id||'')}</div></td><td>${h(l.parent_name||'')}</td><td>${h(l.agent_name||'—')}</td><td>${h(l.disposition||'Fresh')}</td>
+    <td>${chg(l.agent_name||'Fresh pool',c.clear_agent?'Fresh pool':c.agent_name)}${chg(l.disposition||'Fresh',c.disposition)}${chg(l.parent_name,c.parent_name)}${chg(l.phone_code,c.phone_code)}${o.msg?`<div style="font-size:11px;color:#92400e">${h(o.msg)}</div>`:''}</td><td>${buStatusPill(o.status)}</td></tr>`; }).join('');
+  const prog=_bu.prog;
+  return title+`<div class="card"><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:10px"><div><h3 style="margin:0 0 2px">Review &amp; apply</h3>
+      <div style="font-size:12px;color:var(--text2)">${h(_bu.file)} · ${_bu.rows.length.toLocaleString()} rows · only the leads ticked below will be changed</div></div>
+      <div style="display:flex;gap:8px"><button class="btn btn-outline btn-sm" onclick="buDownloadReport()">⬇ Download preview</button><button class="btn btn-outline btn-sm" onclick="buReset()">Cancel</button></div></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">${pill('matched','Will update')}${pill('nochange','No change')}${pill('notfound','Not found')}${pill('ambiguous','Ambiguous')}${pill('invalid','Invalid')}${pill('dupfile','Repeated')}${pill('','All')}</div>
+    <div style="display:flex;gap:8px;margin-bottom:8px"><button class="btn btn-outline btn-sm" onclick="buSelAll(true)">Select all shown</button><button class="btn btn-outline btn-sm" onclick="buSelAll(false)">Clear shown</button></div>
+    <div style="overflow:auto;max-height:460px;border:1px solid var(--border,#e2e6ed);border-radius:8px"><table style="width:100%;border-collapse:collapse;font-size:12px"><thead style="position:sticky;top:0;background:#f6f8fb"><tr>${['','Row','Phone / Lead ID','Parent (now)','Agent (now)','Disposition (now)','Change','Result'].map(x=>`<th style="padding:8px;text-align:left;font-size:11px;color:var(--text2)">${x}</th>`).join('')}</tr></thead>
+      <tbody>${tr||'<tr><td colspan="8" style="text-align:center;padding:24px;color:var(--text2)">No rows in this view.</td></tr>'}</tbody></table></div>
+    ${buView().length>500?'<p style="font-size:12px;color:var(--text2);margin:8px 0 0">Showing the first 500 of this view. “Select all shown” applies to every row in the view, not only the 500 visible; use Download preview to see all.</p>':''}
+    <div style="display:flex;justify-content:flex-end;margin-top:14px"><button class="btn" id="bu-apply" onclick="buApply()" ${(!n||prog)?'disabled':''}>✔ Apply to ${n.toLocaleString()} selected lead${n===1?'':'s'}</button></div>
+    ${prog?`<div style="margin-top:14px"><b>Updating…</b><div style="height:10px;background:#eef1f6;border-radius:6px;overflow:hidden;margin-top:6px"><div id="bu-bar" style="height:100%;width:${Math.round(prog.done/prog.total*100)}%;background:#27ae60"></div></div></div>`:''}
+  </div>`;
+}
+
 // ── Stage 2: upload ────────────────────────────────────────────────
 async function impStartUpload(){
   if(_imp.busy||_imp.progress) return;
@@ -3557,6 +3744,7 @@ function renderImport(){
         </table>
         <p style="margin:12px 0 0;font-size:12px;color:var(--text2)">Mobile rules: <b>Australia</b> 61 4… (11 digits) · <b>USA/Canada</b> 1 then 2-9… (11 digits) · <b>UK</b> 44 7… (12 digits) · starts with <b>91</b> = Indian number · everything else = wrong number.</p>
         <button class="btn btn-outline btn-sm" style="margin-top:12px" onclick="downloadImportSample()">⬇ Download sample CSV</button>
+        ${isSA()?`<div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border,#e2e6ed)"><div style="font-size:12px;color:var(--text2);margin-bottom:6px">Need to correct existing leads (agent, phone code, name, disposition) instead of adding new ones?</div><button class="btn btn-outline btn-sm" onclick="buReset();goPage('bulkupdate')">✏️ Update existing leads (bulk override)</button></div>`:''}
       </div>
     </div>`;
   }
@@ -3590,7 +3778,7 @@ function renderImport(){
     <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:10px">
       <div><h3 style="margin:0 0 2px">Stage 2 – Check &amp; upload</h3>
         <div style="font-size:12px;color:var(--text2)">${h(_imp.file)} · ${_imp.rows.length.toLocaleString()} rows · Dataset: <b>${h(impDatasetNames()||'— none —')}</b>${_imp.dsDesc?' · '+h(_imp.dsDesc):''} · demo bookings and dials shown are what is already in the database.</div></div>
-      <button class="btn btn-outline btn-sm" onclick="impDownloadChecked()">⬇ Download checked file</button>
+      <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-outline btn-sm" onclick="impDownloadChecked()">⬇ Download checked file</button>${(isSA()&&c.duplicate)?`<button class="btn btn-outline btn-sm" id="imp-exp-dup" onclick="impExportDuplicates()">⬇ Export Duplicates (Excel)</button>`:''}${isSA()?`<button class="btn btn-outline btn-sm" onclick="buReset();goPage('bulkupdate')">✏️ Update existing leads</button>`:''}</div>
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">${pill('','All',_imp.rows.length)}${pill('unique','Unique',c.unique)}${pill('duplicate','Duplicate',c.duplicate)}${pill('wrong','Wrong Number',c.wrong)}${pill('indian','Indian Number',c.indian)}</div>
     <div style="overflow:auto;max-height:420px;border:1px solid var(--border,#e2e6ed);border-radius:8px${_imp.busy?';opacity:.5':''}">
@@ -10389,7 +10577,7 @@ function renderApp(){
   </div>`;
 }
 function renderSAPages(){
-  const pages={dashboard:renderSADash,leads:renderSALeads,assign:renderAssign,agents:renderAgents,bulkedit:()=>{ goPage('datamanage'); return ''; },datamanage:renderDataManage,attendance:renderAttendance,performance:renderPerformance,bookings:renderBookings,agentkitty:renderAdminAgentKitty,agentinventory:renderAgentInventory,freshleads:renderFreshLeads,todayleads:renderAdminTodayLeads,reports:renderReports,workedleads:renderWorkedLeads,dispanalysis:renderDispAnalysis,export:renderExport,import:renderImport,cdr:renderCdr,loginlog:renderLoginLog,leadlists:renderLeadLists,settings:renderSettings,addlead:renderAddLeadPage,editlead:renderEditLeadPage,
+  const pages={dashboard:renderSADash,leads:renderSALeads,assign:renderAssign,agents:renderAgents,bulkedit:()=>{ goPage('datamanage'); return ''; },datamanage:renderDataManage,attendance:renderAttendance,performance:renderPerformance,bookings:renderBookings,agentkitty:renderAdminAgentKitty,agentinventory:renderAgentInventory,freshleads:renderFreshLeads,todayleads:renderAdminTodayLeads,reports:renderReports,workedleads:renderWorkedLeads,dispanalysis:renderDispAnalysis,export:renderExport,import:renderImport,bulkupdate:renderBulkUpdate,cdr:renderCdr,loginlog:renderLoginLog,leadlists:renderLeadLists,settings:renderSettings,addlead:renderAddLeadPage,editlead:renderEditLeadPage,
     hrms_overview:renderHRMSOverview,hrms_attendance:renderHRMSAttendance,hrms_leaves:renderHRMSLeaves,hrms_salary:renderHRMSSalary,hrms_increment:renderHRMSIncrement,
     quality:renderQualityPage,promptmanager:renderPromptManager,
     teamchat:renderTeamChat,
