@@ -570,7 +570,7 @@ tr:last-child td{border-bottom:none;}tr:hover td{background:#fafafa;cursor:point
 // login screen and logged to the console, so a quick hard refresh + glance
 // tells him definitively whether Netlify is actually serving THIS file yet,
 // instead of guessing at whether a reported bug was ever really fixed.
-const BUILD_STAMP='2026-11-23-dup-bulk';
+const BUILD_STAMP='2026-11-23-agent-packets';
 console.log('[EdvantEdge CRM] build', BUILD_STAMP);
 const SB_URL='https://qyubbieikviesfcorusq.supabase.co';
 const SB_KEY=['eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF5','dWJiaWVpa3ZpZXNmY29ydXNxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU0OTkzNjEsImV4cCI6MjA5MTA3NTM2MX0.t_4mZWd_Qo1KHrGN9imMnnpn6UkLtLFrOeI2Q9lPD08'].join('');
@@ -1564,7 +1564,8 @@ async function loadAsgnData(){
   const eth=(ethR.data||[]).map(r=>r.name);
   const disp=(dispR.data||[]).map(r=>r.name);
 
-  S.asgn.datasets   =ds.sort((a,b)=>a.toLowerCase().localeCompare(b.toLowerCase()));
+  const _live=await loadLivePackets();
+  S.asgn.datasets   =(_live||ds).slice().sort((a,b)=>a.toLowerCase().localeCompare(b.toLowerCase()));
   S.asgn.grades     =gr.sort((a,b)=>parseFloat(a)-parseFloat(b)||a.localeCompare(b));
   S.asgn.zones      =zo.sort((a,b)=>a.toLowerCase().localeCompare(b.toLowerCase()));
   S.asgn.countries  =co.sort((a,b)=>a.toLowerCase().localeCompare(b.toLowerCase()));
@@ -3365,7 +3366,8 @@ async function impRunCheck(){
     if(!raw.length) throw new Error('No data rows were found in that file.');
     let map=impMapHeaders(raw[0]), startAt=1;
     if(!map){ map={}; IMP_FIELDS.forEach((f,i)=>{map[f]=i;}); startAt=0; }   // no header → fixed column order
-    else { const have=new Set(raw[0].map(_impKey)); const miss=IMP_TEMPLATE_HEADERS.filter(x=>!have.has(_impKey(x))&&!(map[({phone:'mobile',zone:'timezone',agent_id:'agent'})[_impKey(x)]||_impKey(x).replace(/ /g,'_')]!==undefined)); if(miss.length) showToast('Template columns not found in this file (left blank): '+miss.join(', ')); }
+    else if(map.agent===undefined) throw new Error('Your file has no agent_name column. It is now required — add an agent_name column with each lead\'s agent (or type Fresh pool for unassigned leads), then upload again.');
+    else { const have=new Set(raw[0].map(_impKey)); const miss=IMP_TEMPLATE_HEADERS.filter(x=>!have.has(_impKey(x))&&!(map[({phone:'mobile',zone:'timezone',agent_name:'agent'})[_impKey(x)]||_impKey(x).replace(/ /g,'_')]!==undefined)); if(miss.length) showToast('Template columns not found in this file (left blank): '+miss.join(', ')); }
     const rows=[]; let rowNo=0;
     for(let i=startAt;i<raw.length;i++){
       const r=raw[i]; if(!r||r.every(v=>String(v||'').trim()==='')) continue;
@@ -3395,6 +3397,7 @@ async function impRunCheck(){
       else { r.status=impClassify(n); if(n) seen[n]=true; }
       cnt[r.status]++;
     });
+    await impResolveAgents(rows);
     _imp.dialMap=existing.dials;
     _imp.rows=rows; _imp.cnt=cnt; _imp.filter=''; _imp.stage=2; _imp.busy=''; _imp.done=null;
     _imp.batchId='imp_'+new Date().toISOString().slice(0,10).replace(/-/g,'')+'_'+Math.random().toString(36).slice(2,7);
@@ -3436,15 +3439,32 @@ async function impLoadBookings(){
   _imp.bookMap=map;
 }
 function impDatasetNames(){ const m={}; _imp.rows.forEach(r=>{ if(r.data_set) m[r.data_set]=1; }); const k=Object.keys(m); return k.length>4?k.slice(0,4).join(', ')+' +'+(k.length-4)+' more':k.join(', '); }
-function impViewRows(){ return _imp.filter?_imp.rows.filter(r=>r.status===_imp.filter):_imp.rows; }
+// Agent Name check: every lead must name an existing, active CRM agent (or explicitly say Fresh pool).
+async function impResolveAgents(rows){
+  const m={}; let loaded=false;
+  try{ const {data}=await sb.rpc('list_crm_users'); loaded=Array.isArray(data); (data||[]).filter(u=>u.role==='agent').forEach(u=>{ m[String(u.name).trim().toLowerCase()]=u; m[String(u.id).trim().toLowerCase()]=u; }); }catch(e){}
+  rows.forEach(r=>{
+    const a=String(r.agent||'').trim(); r.agentId=null; r.agentName=''; r.agentIssue='';
+    if(!a){ r.agentIssue='Agent name is blank'; return; }
+    if(/^(fresh ?pool|unassigned|none)$/i.test(a)){ r.agentName='Fresh pool'; return; }
+    if(!loaded){ r.agentIssue='Could not load CRM users to check this agent'; return; }
+    const u=m[a.toLowerCase()];
+    if(!u){ r.agentIssue='Agent "'+a+'" is not a CRM user'; return; }
+    if(u.active===false){ r.agentIssue='Agent "'+u.name+'" is inactive'; return; }
+    r.agentId=u.id; r.agentName=u.name;
+  });
+}
+function impIncluded(r){ return r.status==='unique' || (_imp.incBad&&(r.status==='wrong'||r.status==='indian')&&!!r.norm); }
+function impAgentBad(){ return _imp.rows.filter(r=>r.agentIssue&&impIncluded(r)); }
+function impViewRows(){ const f=_imp.filter; if(!f) return _imp.rows; if(f==='agent') return impAgentBad(); return _imp.rows.filter(r=>r.status===f); }
 async function impSetFilter(f){ _imp.filter=f; _imp.busy='Loading…'; render(); await impLoadBookings(); _imp.busy=''; render(); }
 function impToggleBad(cb){ _imp.incBad=!!cb.checked; }
 function impDiscard(){ if(!confirm('Discard this checked file?\nNothing has been imported yet.')) return; impReset(); }
 function impDownloadChecked(){
-  const head=['Row','Country','Parent Name','Child Name','Grade','Mobile','Email','City','Time Zone','Ethnicity','Dispositions','Dataset','Status'];
+  const head=['Row','Country','Parent Name','Child Name','Grade','Mobile','Email','City','Time Zone','Ethnicity','Dispositions','Dataset','Agent','Agent Check','Status'];
   const lbl={unique:'Unique',duplicate:'Duplicate',wrong:'Wrong number',indian:'Indian number'};
   const q=v=>'"'+String(v==null?'':v).replace(/"/g,'""')+'"';
-  const csv=[head.map(q).join(',')].concat(_imp.rows.map(r=>[r.row_no,r.country,r.parent_name,r.child_name,r.grade,r.mobile,r.email,r.city,r.timezone,r.ethnicity,r.disposition,r.data_set,lbl[r.status]].map(q).join(','))).join('\n');
+  const csv=[head.map(q).join(',')].concat(_imp.rows.map(r=>[r.row_no,r.country,r.parent_name,r.child_name,r.grade,r.mobile,r.email,r.city,r.timezone,r.ethnicity,r.disposition,r.data_set,r.agentName||r.agent||'',r.agentIssue||'OK',lbl[r.status]].map(q).join(','))).join('\n');
   const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
   a.download='checked_'+(_imp.file||'import').replace(/\.[^.]+$/,'')+'.csv'; a.click();
 }
@@ -3641,14 +3661,8 @@ async function impStartUpload(){
   const incl=r=> r.status==='unique' || (_imp.incBad&&(r.status==='wrong'||r.status==='indian')&&r.norm);
   const list=_imp.rows.filter(incl);
   if(!list.length){ showToast('Nothing to import — every row is a duplicate or has no usable number','error'); return; }
-  // resolve agent names → ids (only if the file had an agent column)
-  const agentMap={};
-  try{
-    if(list.some(r=>r.agent)){
-      const {data:us}=await sb.rpc('list_crm_users');
-      (us||[]).filter(u=>u.role==='agent').forEach(u=>{ agentMap[String(u.name).toLowerCase()]=u.id; agentMap[String(u.id).toLowerCase()]=u.id; });
-    }
-  }catch(e){}
+  // agent names were validated at check time; block if anything is still unresolved
+  if(impAgentBad().length){ showToast('Fix the agent names first — '+impAgentBad().length+' lead(s) have an agent problem','error'); return; }
   const now=new Date().toISOString(), today=now.slice(0,10);
   const lbl={wrong:'Wrong number',indian:'Indian number'};
   const leads=list.map((r,i)=>({
@@ -3657,7 +3671,7 @@ async function impStartUpload(){
     parent_name:r.parent_name, child_name:r.child_name, grade:r.grade, email:r.email, city:r.city,
     data_set:r.data_set||'', Zone:r.timezone, Country:normCountry(r.country)||impCountryFromNorm(r.norm), ethnicity:r.ethnicity,
     disposition:r.disposition||null,
-    agent_id:(r.agent&&agentMap[String(r.agent).toLowerCase()])||null,
+    agent_id:r.agentId||null, agent_name:r.agentId?r.agentName:null,
     notes:[r.notes,lbl[r.status]?('Import check: '+lbl[r.status]):''].filter(Boolean).join(' | ')||null,
     priority:r.priority||null, relation:r.relation||null, comments:r.comments||null, client_booked:r.client_booked||null, demo_platform:r.demo_platform||null,
     cooling_since:impDate(r.cooling_since),
@@ -3766,13 +3780,13 @@ function renderImport(){
     const bm=_imp.bookMap[r.norm]||{}; let tc=0;
     tc=Object.keys(bm).reduce((a,k)=>a+bm[k],0);
     const cells=BK_CLIENTS.map(cl=>{ const v=bm[cl]||0; return `<td style="text-align:center">${v?`<span style="background:#e0e7ff;color:#3730a3;font-weight:700;border-radius:8px;padding:1px 8px">${v}</span>`:'<span style="color:#ccc">0</span>'}</td>`; }).join('');
-    return `<tr><td style="color:var(--text2)">${r.row_no}</td><td>${h(r.country)}</td><td>${h(r.parent_name)}</td><td>${h(r.child_name)}</td><td>${h(r.grade)}</td><td><b>${h(r.mobile)}</b></td><td>${h(r.email)}</td><td>${h(r.city)}</td><td>${h(r.timezone)}</td><td>${h(r.ethnicity)}</td><td>${h(r.disposition)}</td><td><b>${h(r.data_set)||'—'}</b></td>${cells}<td style="text-align:center"><b>${tc}</b></td><td style="text-align:center"><b>${_imp.dialMap[r.norm]||0}</b></td><td>${impStatusPill(r.status)}</td></tr>`;
+    return `<tr><td style="color:var(--text2)">${r.row_no}</td><td>${h(r.country)}</td><td>${h(r.parent_name)}</td><td>${h(r.child_name)}</td><td>${h(r.grade)}</td><td><b>${h(r.mobile)}</b></td><td>${h(r.email)}</td><td>${h(r.city)}</td><td>${h(r.timezone)}</td><td>${h(r.ethnicity)}</td><td>${h(r.disposition)}</td><td><b>${h(r.data_set)||'—'}</b></td><td style="white-space:nowrap">${r.agentIssue?`<span style="color:#991b1b;font-weight:700" title="${h(r.agentIssue)}">⚠ ${h(r.agentIssue)}</span>`:`<b>${h(r.agentName)}</b>`}</td>${cells}<td style="text-align:center"><b>${tc}</b></td><td style="text-align:center"><b>${_imp.dialMap[r.norm]||0}</b></td><td>${impStatusPill(r.status)}</td></tr>`;
   }).join('');
-  const th=['#','Country','Parent Name','Child Name','Grade','Mobile','Email','City','Time Zone','Ethnicity','Dispositions','Dataset'].concat(BK_CLIENTS,['Total Clients','Total Dials','Status']).map(x=>`<th style="padding:8px 10px;text-align:left;font-size:11px;white-space:nowrap;background:#f4f6fa">${x}</th>`).join('');
+  const th=['#','Country','Parent Name','Child Name','Grade','Mobile','Email','City','Time Zone','Ethnicity','Dispositions','Dataset','Agent'].concat(BK_CLIENTS,['Total Clients','Total Dials','Status']).map(x=>`<th style="padding:8px 10px;text-align:left;font-size:11px;white-space:nowrap;background:#f4f6fa">${x}</th>`).join('');
   const prog=_imp.progress;
   return title+impStepper(2)+`
   <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:14px">
-    ${stat('Unique',c.unique,'#065f46')}${stat('Duplicate (will be skipped)',c.duplicate,'#92400e')}${stat('Wrong number',c.wrong,'#991b1b')}${stat('Indian number',c.indian,'#3730a3')}
+    ${stat('Unique',c.unique,'#065f46')}${stat('Duplicate (will be skipped)',c.duplicate,'#92400e')}${stat('Wrong number',c.wrong,'#991b1b')}${stat('Indian number',c.indian,'#3730a3')}${stat('Agent problems',impAgentBad().length,impAgentBad().length?'#991b1b':'#065f46')}
   </div>
   <div class="card">
     <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:10px">
@@ -3780,17 +3794,21 @@ function renderImport(){
         <div style="font-size:12px;color:var(--text2)">${h(_imp.file)} · ${_imp.rows.length.toLocaleString()} rows · Dataset: <b>${h(impDatasetNames()||'— none —')}</b>${_imp.dsDesc?' · '+h(_imp.dsDesc):''} · demo bookings and dials shown are what is already in the database.</div></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-outline btn-sm" onclick="impDownloadChecked()">⬇ Download checked file</button>${(isSA()&&c.duplicate)?`<button class="btn btn-outline btn-sm" id="imp-exp-dup" onclick="impExportDuplicates()">⬇ Export Duplicates (Excel)</button>`:''}${isSA()?`<button class="btn btn-outline btn-sm" onclick="buReset();goPage('bulkupdate')">✏️ Update existing leads</button>`:''}</div>
     </div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">${pill('','All',_imp.rows.length)}${pill('unique','Unique',c.unique)}${pill('duplicate','Duplicate',c.duplicate)}${pill('wrong','Wrong Number',c.wrong)}${pill('indian','Indian Number',c.indian)}</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">${pill('','All',_imp.rows.length)}${pill('unique','Unique',c.unique)}${pill('duplicate','Duplicate',c.duplicate)}${pill('wrong','Wrong Number',c.wrong)}${pill('indian','Indian Number',c.indian)}${pill('agent','Agent problems',impAgentBad().length)}</div>
     <div style="overflow:auto;max-height:420px;border:1px solid var(--border,#e2e6ed);border-radius:8px${_imp.busy?';opacity:.5':''}">
       <table style="width:100%;border-collapse:collapse;font-size:12px"><thead style="position:sticky;top:0"><tr>${th}</tr></thead>
-      <tbody>${tr||`<tr><td colspan="${15+BK_CLIENTS.length}" style="text-align:center;padding:24px;color:var(--text2)">No rows in this view.</td></tr>`}</tbody></table>
+      <tbody>${tr||`<tr><td colspan="${16+BK_CLIENTS.length}" style="text-align:center;padding:24px;color:var(--text2)">No rows in this view.</td></tr>`}</tbody></table>
     </div>
     ${(impViewRows().length>1000)?`<p style="font-size:12px;color:var(--text2);margin:8px 0 0">Showing the first 1,000 rows of this view. Every row is still checked and imported – use "Download checked file" to see all of them.</p>`:''}
+    ${(()=>{ const bad=impAgentBad(); if(!bad.length) return ''; const by={}; bad.forEach(r=>{ by[r.agentIssue]=(by[r.agentIssue]||0)+1; });
+      return `<div style="background:#fee2e2;color:#991b1b;border-radius:8px;padding:10px 14px;font-size:13px;margin-top:14px"><b>${bad.length.toLocaleString()} lead${bad.length===1?'':'s'} cannot be imported yet — agent name problem.</b><br>`
+        +Object.keys(by).slice(0,12).map(k=>h(k)+' — '+by[k].toLocaleString()+' row'+(by[k]===1?'':'s')).join('<br>')
+        +`<div style="margin-top:6px;font-size:12px">Correct the <b>agent_name</b> column in your file (use the exact CRM agent name, or <b>Fresh pool</b> for unassigned) and upload again. Use the “Agent problems” tab to see the rows.</div></div>`; })()}
     <div style="display:flex;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-top:16px;align-items:center">
       <div><label style="display:flex;gap:8px;align-items:center;font-size:13px;cursor:pointer"><input type="checkbox" id="incBad" ${_imp.incBad?'checked':''} onchange="impToggleBad(this);render()"><span>Also import wrong &amp; Indian numbers (they are saved with their status marked)</span></label>
         <div style="font-size:12px;color:var(--text2);margin-top:4px">Duplicates are never imported.</div></div>
       <div style="display:flex;gap:10px"><button class="btn btn-outline" onclick="impDiscard()" ${prog?'disabled':''}>Cancel</button>
-        <button class="btn" id="startImport" onclick="impStartUpload()" ${prog?'disabled':''}>⬆ Upload all leads (${importable.toLocaleString()})</button></div>
+        <button class="btn" id="startImport" onclick="impStartUpload()" ${(prog||impAgentBad().length)?'disabled':''} ${impAgentBad().length?'title="Fix the agent names first"':''}>⬆ Upload all leads (${importable.toLocaleString()})</button></div>
     </div>
     ${prog?`<div style="margin-top:16px"><div style="display:flex;justify-content:space-between;margin-bottom:6px"><b>Importing…</b><b id="imp-pct">${Math.round(prog.done/prog.total*100)}%</b></div>
       <div style="height:10px;background:#eef1f6;border-radius:6px;overflow:hidden"><div id="imp-bar" style="height:100%;width:${Math.round(prog.done/prog.total*100)}%;background:#27ae60;transition:width .2s"></div></div>
@@ -3799,13 +3817,13 @@ function renderImport(){
 }
 
 // The ONE list of template columns — used for the sample download, the chips on the page and the import check
-const IMP_TEMPLATE_HEADERS=['phone','parent_name','child_name','phone_code','alt_phone','grade','email','city','data_set','Zone','Country','ethnicity','disposition','agent_id'];
+const IMP_TEMPLATE_HEADERS=['phone','parent_name','child_name','phone_code','alt_phone','grade','email','city','data_set','Zone','Country','ethnicity','disposition','agent_name'];
 function downloadImportSample(){
   const headers=IMP_TEMPLATE_HEADERS;
   const examples=[
-    ['447700900001','Sarah Johnson','Emily Johnson','447700900001','','Grade 5','sarah@email.com','London','UK_FB_JUN26','GMT','United Kingdom','South Asian','',''],
-    ['12025551234','Michael Smith','Jake Smith','12025551234','','Grade 3','michael@email.com','New York','US_FB_JUN26','EST','USA','South Asian','',''],
-    ['61412345678','Priya Patel','Arya Patel','61412345678','','Grade 4','priya@email.com','Sydney','AUS_FB_JUN26','AEST','Australia','South Asian','',''],
+    ['447700900001','Sarah Johnson','Emily Johnson','447700900001','','Grade 5','sarah@email.com','London','UK_FB_JUN26','GMT','United Kingdom','South Asian','','Aqsa'],
+    ['12025551234','Michael Smith','Jake Smith','12025551234','','Grade 3','michael@email.com','New York','US_FB_JUN26','EST','USA','South Asian','','Chitra'],
+    ['61412345678','Priya Patel','Arya Patel','61412345678','','Grade 4','priya@email.com','Sydney','AUS_FB_JUN26','AEST','Australia','South Asian','','Galvin'],
   ];
   const csv=[headers,...examples].map(r=>r.map(v=>`"${v}"`).join(',')).join('\n');
   const a=document.createElement('a');
@@ -5421,7 +5439,7 @@ function rcFillSets(){
   const sel=document.getElementById('rc-set'); if(!sel||!_dsPackets) return;
   const cur=sel.value;
   sel.innerHTML='<option value="">All Data Packets</option>'
-    +_dsPackets.map(function(p){return '<option value="'+h(p.name)+'"'+(cur===p.name?' selected':'')+'>'+h(p.name)+'</option>';}).join('');
+    +_dsPackets.filter(function(p){return Number(p.total)>0;}).map(function(p){return '<option value="'+h(p.name)+'"'+(cur===p.name?' selected':'')+'>'+h(p.name)+'</option>';}).join('');
 }
 
 // ── Data packet enable / disable ─────────────────────────────────────────────
@@ -5429,6 +5447,16 @@ function rcFillSets(){
 // filters, so an admin can retire a source without deleting anything.
 let _dsPackets=null;
 
+// Packet names that currently hold leads (DB: get_live_packet_names). Dropdowns use this so removed/historical
+// packet names never show. 60s cache; falls back to the old list if the call fails.
+async function loadLivePackets(force){
+  try{
+    if(!force&&S._livePk&&Date.now()-S._livePkAt<60000) return S._livePk;
+    const {data,error}=await sb.rpc('get_live_packet_names');
+    if(!error&&Array.isArray(data)){ S._livePk=data.filter(Boolean); S._livePkAt=Date.now(); return S._livePk; }
+  }catch(e){}
+  return S._livePk||null;
+}
 async function dsLoadPackets(){
   const box=document.getElementById('ds-packet-list');
   if(box) box.textContent='Loading\u2026';
@@ -16100,6 +16128,7 @@ async function dmInitFilterValues(){
 
   // Datasets — deduplicated
   var datasets=[...new Set((rs[0].data||[]).map(function(r){return(r.name||'').trim();}).filter(Boolean))].sort();
+  try{ var _lv=await loadLivePackets(true); if(_lv) datasets=_lv.slice().sort(); }catch(e){}
   var dOpt='<option value="">-- Select dataset --</option>'+datasets.map(function(d){return '<option value="'+h(d)+'">'+h(d)+'</option>';}).join('');
   ['dm-dataset','be-find-ds','be-rename-from','c30-ds','nw-ds'].forEach(function(id){var el=g(id);if(el)el.innerHTML=dOpt;});
 
